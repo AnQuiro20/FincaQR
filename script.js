@@ -1,47 +1,35 @@
 document.addEventListener('DOMContentLoaded', async function () {
 
-    // IndexedDB setup
-    let db;
-    function initDB() {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open('CattleDB', 1);
-            request.onupgradeneeded = function (event) {
-                const db = event.target.result;
-                if (!db.objectStoreNames.contains('inventory')) {
-                    db.createObjectStore('inventory', { keyPath: 'id' });
-                }
-                if (!db.objectStoreNames.contains('breedingRecords')) {
-                    db.createObjectStore('breedingRecords', { keyPath: 'id' });
-                }
-            };
-            request.onsuccess = function (event) {
-                db = event.target.result;
-                resolve();
-            };
-            request.onerror = function (event) {
-                reject(event.target.error);
-            };
-        });
+    // Supabase setup
+    let supabaseClient;
+    async function initDB() {
+        // Replace with your Supabase credentials
+        const supabaseUrl = 'https://YOUR_SUPABASE_URL.supabase.co';
+        const supabaseKey = 'YOUR_SUPABASE_ANON_KEY';
+        supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
     }
 
-    function dbGetAll(storeName) {
-        return new Promise(resolve => {
-            const tx = db.transaction(storeName, 'readonly');
-            const store = tx.objectStore(storeName);
-            const request = store.getAll();
-            request.onsuccess = () => resolve(request.result || []);
-            request.onerror = () => resolve([]);
-        });
+    async function dbGetAll(table) {
+        const { data, error } = await supabaseClient.from(table).select('*');
+        if (error) {
+            console.error('Supabase fetch error:', error);
+            return [];
+        }
+        return data || [];
     }
 
-    function dbPut(storeName, item) {
-        const tx = db.transaction(storeName, 'readwrite');
-        tx.objectStore(storeName).put(item);
+    async function dbPut(table, item) {
+        const { error } = await supabaseClient.from(table).upsert(item);
+        if (error) {
+            console.error('Supabase upsert error:', error);
+        }
     }
 
-    function dbDelete(storeName, key) {
-        const tx = db.transaction(storeName, 'readwrite');
-        tx.objectStore(storeName).delete(key);
+    async function dbDelete(table, key) {
+        const { error } = await supabaseClient.from(table).delete().eq('id', key);
+        if (error) {
+            console.error('Supabase delete error:', error);
+        }
     }
 
     await initDB();
@@ -96,7 +84,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     });
 
     // Registrar nuevo animal
-    animalForm.addEventListener('submit', function (e) {
+    animalForm.addEventListener('submit', async function (e) {
         e.preventDefault();
 
         const type = animalType.value;
@@ -153,7 +141,7 @@ document.addEventListener('DOMContentLoaded', async function () {
 
         // Guardar y actualizar
         inventory.push(animal);
-        dbPut('inventory', animal);
+        await dbPut('inventory', animal);
 
         Swal.fire({
             title: '¡Registro exitoso!',
@@ -202,7 +190,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     // Registrar preñez
-    registerBreedingBtn.onclick = function () {
+    registerBreedingBtn.onclick = async function () {
         const cowId = parseInt(document.getElementById('pregnantCowSelect').value);
         const bullId = parseInt(document.getElementById('breedingBullSelect').value) || null;
         const breedingDate = document.getElementById('breedingDate').value;
@@ -228,7 +216,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         };
 
         breedingRecords.push(record);
-        dbPut('breedingRecords', record);
+        await dbPut('breedingRecords', record);
 
         Swal.fire({
             title: '¡Registro exitoso!',
@@ -392,18 +380,18 @@ document.addEventListener('DOMContentLoaded', async function () {
             confirmButtonText: 'Sí, eliminar',
             cancelButtonText: 'Cancelar',
             confirmButtonColor: '#d33'
-        }).then((result) => {
+        }).then(async (result) => {
             if (result.isConfirmed) {
                 // Revertir el conteo de partos si la vaca existe
                 if (cow) {
                     cow.births = Math.max(0, (cow.births || 1) - 1);
-                    dbPut('inventory', cow);
+                    await dbPut('inventory', cow);
                 }
 
                 // Revertir el registro de parto
                 record.birthRegistered = false;
                 delete record.actualBirthDate;
-                dbPut('breedingRecords', record);
+                await dbPut('breedingRecords', record);
 
                 initializeUI();
 
@@ -476,16 +464,16 @@ document.addEventListener('DOMContentLoaded', async function () {
                     return 'La fecha de parto no puede ser anterior a la fecha de preñez';
                 }
             }
-        }).then((result) => {
+        }).then(async (result) => {
             if (result.isConfirmed) {
                 // Actualizar número de partos de la vaca
                 cow.births = (cow.births || 0) + 1;
-                dbPut('inventory', cow);
+                await dbPut('inventory', cow);
 
                 // Marcar el registro como completado
                 record.birthRegistered = true;
                 record.actualBirthDate = result.value;
-                dbPut('breedingRecords', record);
+                await dbPut('breedingRecords', record);
 
                 initializeUI();
 
@@ -525,10 +513,10 @@ document.addEventListener('DOMContentLoaded', async function () {
             cancelButtonColor: '#3085d6',
             confirmButtonText: 'Sí, eliminar',
             cancelButtonText: 'Cancelar'
-        }).then((result) => {
+        }).then(async (result) => {
             if (result.isConfirmed) {
                 breedingRecords = breedingRecords.filter(r => r.id !== recordId);
-                dbDelete('breedingRecords', recordId);
+                await dbDelete('breedingRecords', recordId);
                 initializeUI();
 
                 Swal.fire({
@@ -572,7 +560,7 @@ document.addEventListener('DOMContentLoaded', async function () {
 
             // Eliminar solo del inventario (no tocar breedingRecords)
             inventory = inventory.filter(a => a.id !== id);
-            dbDelete('inventory', id);
+            await dbDelete('inventory', id);
 
             initializeUI();
 
