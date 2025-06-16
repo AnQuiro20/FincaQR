@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finca QR - Control de Ganado</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="styles.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="header text-center">
+        <h1><i class="fas fa-cow animal-icon"></i> Finca QR - Control de Ganado</h1>
+    </div>
+
+    <div class="container">
+        <ul class="nav nav-tabs" id="myTab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="register-tab" data-bs-toggle="tab" data-bs-target="#register"
+                    type="button" role="tab" aria-controls="register" aria-selected="true">
+                    <i class="fas fa-plus-circle"></i> Registro
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="qr-tab" data-bs-toggle="tab" data-bs-target="#qr" type="button" role="tab"
+                    aria-controls="qr" aria-selected="false">
+                    <i class="fas fa-qrcode"></i> Generar QR
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="inventory-tab" data-bs-toggle="tab" data-bs-target="#inventory"
+                    type="button" role="tab" aria-controls="inventory" aria-selected="false">
+                    <i class="fas fa-list"></i> Inventario
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="breeding-tab" data-bs-toggle="tab" data-bs-target="#breeding" type="button"
+                    role="tab" aria-controls="breeding" aria-selected="false">
+                    <i class="fas fa-baby-carriage"></i> Sala de Partos
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content" id="myTabContent">
+            <!-- Pestaña de Registro -->
+            <div class="tab-pane fade show active" id="register" role="tabpanel" aria-labelledby="register-tab">
+                <div class="card">
+                    <div class="card-header">
+                        <h4><i class="fas fa-plus-circle"></i> Registrar Animal</h4>
+                    </div>
+                    <div class="card-body">
+                        <form id="animalForm">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="animalType" class="form-label">Tipo de Animal</label>
+                                        <select class="form-select" id="animalType" required>
+                                            <option value="">Seleccione...</option>
+                                            <option value="vaca">Vaca</option>
+                                            <option value="toro">Toro</option>
+                                            <option value="ternero">Ternero(a)</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label for="earTag" class="form-label">Número de Arete</label>
+                                        <input type="text" class="form-control" id="earTag" required>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label for="name" class="form-label">Nombre (opcional)</label>
+                                        <input type="text" class="form-control" id="name">
+                                    </div>
+
+                                    <div class="mb-3 d-none" id="birthDateField">
+                                        <label for="birthDate" class="form-label">Fecha de Nacimiento (solo
+                                            terneros)</label>
+                                        <input type="date" class="form-control" id="birthDate">
+                                    </div>
+                                </div>
+
+                                <div class="col-md-6">
+                                    <div class="mb-3" id="ageField">
+                                        <label for="age" class="form-label">Edad aproximada (años)</label>
+                                        <input type="number" class="form-control" id="age" min="0" value="0" required>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label for="breed" class="form-label">Raza</label>
+                                        <select class="form-select" id="breed" required>
+                                            <option value="">Seleccione...</option>
+                                            <option value="holstein">Holstein</option>
+                                            <option value="jersey">Jersey</option>
+                                            <option value="angus">Angus</option>
+                                            <option value="brahman">Brahman</option>
+                                            <option value="gyr">Gyr</option>
+                                            <option value="nelore">Nelore</option>
+                                            <option value="pardo">Pardo</option>
+                                            <option value="guzerat">Guzerat</option>
+                                            <option value="pardo Suizo">Pardo Suizo</option>
+                                            <option value="Chumeca">Chumeca</option>
+                                            <option value="simmental">Simmental</option>
+                                            <option value="charolais">Charolais</option>
+                                            <option value="limousin">Limousin</option>
+                                            <option value="brangus">Brangus</option>
+                                            <option value="Gyrolando">Gyrolando</option>
+                                            <option value="otra">Otra</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="mb-3" id="genderField">
+                                        <label class="form-label">Sexo</label>
+                                        <div>
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="radio" name="gender" id="male"
+                                                    value="macho" checked>
+                                                <label class="form-check-label" for="male">Macho</label>
+                                            </div>
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="radio" name="gender" id="female"
+                                                    value="hembra">
+                                                <label class="form-check-label" for="female">Hembra</label>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="mb-3 d-none" id="birthsField">
+                                        <label for="births" class="form-label">Total de Partos</label>
+                                        <input type="number" class="form-control" id="births" min="0" value="0">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="notes" class="form-label">Observaciones</label>
+                                <textarea class="form-control" id="notes" rows="2"></textarea>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="fas fa-save"></i> Registrar Animal
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pestaña de Generar QR -->
+            <div class="tab-pane fade" id="qr" role="tabpanel" aria-labelledby="qr-tab">
+                <div class="card">
+                    <div class="card-header">
+                        <h4><i class="fas fa-qrcode"></i> Generar Código QR</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="qrAnimalSelect" class="form-label">Seleccionar Animal</label>
+                                    <select class="form-select" id="qrAnimalSelect">
+                                        <option value="">Seleccione un animal...</option>
+                                    </select>
+                                </div>
+
+                                <div id="selectedAnimalInfo" class="p-3 bg-light rounded">
+                                    <p class="text-center text-muted">Seleccione un animal para ver sus detalles</p>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6 text-center">
+                                <div class="qr-code mb-3">
+                                    <span id="qrPlaceholder">Código aparecerá aquí</span>
+                                </div>
+                                <button id="downloadQR" class="btn btn-primary mb-3" disabled>
+                                    <i class="fas fa-download"></i> Descargar QR
+                                </button>
+                                <div id="qrAnimalDetails" class="text-start">
+                                    <!-- Los detalles del animal para el QR aparecerán aquí -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pestaña de Inventario -->
+            <div class="tab-pane fade" id="inventory" role="tabpanel" aria-labelledby="inventory-tab">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h4><i class="fas fa-list"></i> Inventario de Ganado</h4>
+                        <div>
+                            <button id="exportExcel" class="btn btn-sm btn-success">
+                                <i class="fas fa-file-excel"></i> Exportar a Excel
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="inventoryTable">
+                                <thead>
+                                    <tr>
+                                        <th>Arete</th>
+                                        <th>Tipo</th>
+                                        <th>Nombre</th>
+                                        <th>Edad</th>
+                                        <th>Raza</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Los registros aparecerán aquí -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Pestaña de Sala de Partos -->
+            <div class="tab-pane fade" id="breeding" role="tabpanel" aria-labelledby="breeding-tab">
+                <div class="card">
+                    <div class="card-header">
+                        <h4><i class="fas fa-baby-carriage"></i> Sala de Partos</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="pregnantCowSelect" class="form-label">Seleccionar Vaca</label>
+                                    <select class="form-select" id="pregnantCowSelect">
+                                        <option value="">Seleccione una vaca...</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="breedingBullSelect" class="form-label">Toro (opcional)</label>
+                                    <select class="form-select" id="breedingBullSelect">
+                                        <option value="">Seleccione un toro...</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="breedingDate" class="form-label">Fecha de Preñez</label>
+                                    <input type="date" class="form-control" id="breedingDate">
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="expectedBirthDate" class="form-label">Fecha Estimada de Parto</label>
+                                    <input type="date" class="form-control" id="expectedBirthDate" readonly>
+                                </div>
+
+                                <button id="registerBreeding" class="btn btn-primary">
+                                    <i class="fas fa-save"></i> Registrar Preñez
+                                </button>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h5>Vacas Prenadas</h5>
+                                <div class="table-responsive">
+                                    <table class="table" id="breedingTable">
+                                        <thead>
+                                            <tr>
+                                                <th>Vaca</th>
+                                                <th>Arete</th>
+                                                <th>Fecha Preñez</th>
+                                                <th>Parto Estimado</th>
+                                                <th>Toro</th>
+                                                <th>Acciones</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <!-- Las vacas preñadas aparecerán aquí -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para ver detalles -->
+    <div class="modal fade" id="animalModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Detalles Completos del Animal</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="modalAnimalDetails">
+                    <!-- Los detalles aparecerán aquí -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.19.3/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="script.js"></script>
+</body>
+
+</html>
