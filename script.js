@@ -1,47 +1,25 @@
 document.addEventListener('DOMContentLoaded', async function () {
 
-    // IndexedDB setup
-    let db;
-    function initDB() {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open('CattleDB', 1);
-            request.onupgradeneeded = function (event) {
-                const db = event.target.result;
-                if (!db.objectStoreNames.contains('inventory')) {
-                    db.createObjectStore('inventory', { keyPath: 'id' });
-                }
-                if (!db.objectStoreNames.contains('breedingRecords')) {
-                    db.createObjectStore('breedingRecords', { keyPath: 'id' });
-                }
-            };
-            request.onsuccess = function (event) {
-                db = event.target.result;
-                resolve();
-            };
-            request.onerror = function (event) {
-                reject(event.target.error);
-            };
-        });
+    // Supabase setup
+    let supabaseClient;
+    async function initDB() {
+        // Replace with your Supabase credentials
+        const supabaseUrl = 'https://YOUR_SUPABASE_URL.supabase.co';
+        const supabaseKey = 'YOUR_SUPABASE_ANON_KEY';
+        supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
     }
 
-    function dbGetAll(storeName) {
-        return new Promise(resolve => {
-            const tx = db.transaction(storeName, 'readonly');
-            const store = tx.objectStore(storeName);
-            const request = store.getAll();
-            request.onsuccess = () => resolve(request.result || []);
-            request.onerror = () => resolve([]);
-        });
+    async function dbGetAll(table) {
+        const { data } = await supabaseClient.from(table).select('*');
+        return data || [];
     }
 
-    function dbPut(storeName, item) {
-        const tx = db.transaction(storeName, 'readwrite');
-        tx.objectStore(storeName).put(item);
+    function dbPut(table, item) {
+        supabaseClient.from(table).upsert(item);
     }
 
-    function dbDelete(storeName, key) {
-        const tx = db.transaction(storeName, 'readwrite');
-        tx.objectStore(storeName).delete(key);
+    function dbDelete(table, key) {
+        supabaseClient.from(table).delete().eq('id', key);
     }
 
     await initDB();
