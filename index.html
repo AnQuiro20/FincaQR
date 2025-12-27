@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registro de Ganado - Finca QR</title>
+
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Google Fonts -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Roboto:wght@300;400;500&display=swap"
+        rel="stylesheet">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="styles.css">
+
+    <!-- Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <i class="fas fa-cow"></i>
+                <h1>Ganado<span>Pro</span></h1>
+            </div>
+            <p class="tagline">Sistema de Gestión Ganadera Finca QR</p>
+        </header>
+
+        <!-- Navegación por Pestañas -->
+        <nav class="tabs-navigation">
+            <div class="tabs">
+                <button class="tab active" onclick="cambiarTab('registro')" id="tab-registro">
+                    <i class="fas fa-plus-circle"></i> Registrar Animal
+                </button>
+                <button class="tab" onclick="cambiarTab('consulta')" id="tab-consulta">
+                    <i class="fas fa-list"></i> Ver Ganado Registrado
+                </button>
+                <button class="tab" onclick="cambiarTab('estadisticas')" id="tab-estadisticas">
+                    <i class="fas fa-chart-bar"></i> Estadísticas
+                </button>
+            </div>
+        </nav>
+
+        <main class="main-content">
+            <!-- ================= PESTAÑA DE REGISTRO ================= -->
+            <div id="tab-content-registro" class="tab-content active">
+                <!-- Panel de Selección -->
+                <section class="selection-panel">
+                    <h2><i class="fas fa-plus-circle"></i> Registrar Nuevo Animal</h2>
+                    <p class="subtitle">Selecciona el tipo de animal que deseas registrar</p>
+
+                    <div class="animal-cards">
+                        <div class="animal-card" data-animal="vaca" onclick="mostrarFormulario('vaca')">
+                            <div class="animal-icon vaca">
+                                <i class="fas fa-cow"></i>
+                            </div>
+                            <h3>Vaca</h3>
+                            <p>Registra vacas para producción y reproducción</p>
+                            <div class="badge">Producción</div>
+                        </div>
+
+                        <div class="animal-card" data-animal="toro" onclick="mostrarFormulario('toro')">
+                            <div class="animal-icon toro">
+                                <i class="fas fa-horse-head"></i>
+                            </div>
+                            <h3>Toro</h3>
+                            <p>Registra toros para reproducción y genética</p>
+                            <div class="badge">Genética</div>
+                        </div>
+
+                        <div class="animal-card" data-animal="ternero" onclick="mostrarFormulario('ternero')">
+                            <div class="animal-icon ternero">
+                                <i class="fas fa-horse"></i>
+                            </div>
+                            <h3>Ternero/a</h3>
+                            <p>Registra terneros recién nacidos</p>
+                            <div class="badge">Cría</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Formulario Dinámico -->
+                <section class="form-container">
+                    <div class="form-header">
+                        <h2 id="form-title">Selecciona un tipo de animal</h2>
+                        <p id="form-subtitle">Haz clic en una de las tarjetas para comenzar el registro</p>
+                    </div>
+
+                    <!-- Formulario de Vaca -->
+                    <form id="form-vaca" class="animal-form hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="v_id"><i class="fas fa-tag"></i> Número de Arete (ID)</label>
+                                <input id="v_id" type="number" placeholder="Ej: 1001" required>
+                                <small class="form-hint">Identificador único del animal</small>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="v_raza"><i class="fas fa-dna"></i> Raza</label>
+                                <input id="v_raza" placeholder="Ej: Holstein, Jersey, etc." required>
+                            </div>
+                            <div class="form-group">
+                                <label for="v_nombre"><i class="fas fa-signature"></i> Nombre</label>
+                                <input id="v_nombre" placeholder="Ej: Blanquita, Rosita">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="v_edad"><i class="fas fa-birthday-cake"></i> Edad Aproximada (años)</label>
+                                <input id="v_edad" type="number" min="0" max="30" placeholder="Ej: 5">
+                            </div>
+                            <div class="form-group">
+                                <label for="v_partos"><i class="fas fa-baby"></i> Total de Partos</label>
+                                <input id="v_partos" type="number" min="0" placeholder="Ej: 3">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group full-width">
+                                <label for="v_obs"><i class="fas fa-sticky-note"></i> Observaciones</label>
+                                <textarea id="v_obs" rows="3"
+                                    placeholder="Notas sobre salud, comportamiento, etc."></textarea>
+                            </div>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="button" class="btn-secondary" onclick="ocultarFormularios()">
+                                <i class="fas fa-times"></i> Cancelar
+                            </button>
+                            <button type="button" class="btn-primary" onclick="guardarVaca()">
+                                <i class="fas fa-save"></i> Guardar Vaca
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- Formulario de Toro -->
+                    <form id="form-toro" class="animal-form hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="t_id"><i class="fas fa-tag"></i> Número de Arete (ID)</label>
+                                <input id="t_id" type="number" placeholder="Ej: 2001" required>
+                                <small class="form-hint">Identificador único del animal</small>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="t_raza"><i class="fas fa-dna"></i> Raza</label>
+                                <input id="t_raza" placeholder="Ej: Angus, Hereford, etc." required>
+                            </div>
+                            <div class="form-group">
+                                <label for="t_nombre"><i class="fas fa-signature"></i> Nombre</label>
+                                <input id="t_nombre" placeholder="Ej: Torito, Fuerte">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group full-width">
+                                <label for="t_edad"><i class="fas fa-birthday-cake"></i> Edad Aproximada (años)</label>
+                                <input id="t_edad" type="number" min="0" max="20" placeholder="Ej: 4">
+                            </div>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="button" class="btn-secondary" onclick="ocultarFormularios()">
+                                <i class="fas fa-times"></i> Cancelar
+                            </button>
+                            <button type="button" class="btn-primary" onclick="guardarToro()">
+                                <i class="fas fa-save"></i> Guardar Toro
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- Formulario de Ternero -->
+                    <form id="form-ternero" class="animal-form hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="te_id"><i class="fas fa-tag"></i> Número de Arete (ID)</label>
+                                <input id="te_id" type="number" placeholder="Ej: 3001" required>
+                                <small class="form-hint">Identificador único del animal</small>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="te_raza"><i class="fas fa-dna"></i> Raza</label>
+                                <input id="te_raza" placeholder="Ej: Holstein, etc." required>
+                            </div>
+                            <div class="form-group">
+                                <label for="te_nombre"><i class="fas fa-signature"></i> Nombre</label>
+                                <input id="te_nombre" placeholder="Ej: Pequeño, Manchitas">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="te_genero"><i class="fas fa-venus-mars"></i> Género</label>
+                                <select id="te_genero">
+                                    <option value="Macho">Macho</option>
+                                    <option value="Hembra">Hembra</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="te_fecha"><i class="fas fa-calendar-alt"></i> Fecha de Nacimiento</label>
+                                <input id="te_fecha" type="date">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="te_padre"><i class="fas fa-male"></i> Arete del Padre (Toro)</label>
+                                <input id="te_padre" type="number" placeholder="Ej: 2001">
+                            </div>
+                            <div class="form-group">
+                                <label for="te_madre"><i class="fas fa-female"></i> Arete de la Madre (Vaca)</label>
+                                <input id="te_madre" type="number" placeholder="Ej: 1001">
+                            </div>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="button" class="btn-secondary" onclick="ocultarFormularios()">
+                                <i class="fas fa-times"></i> Cancelar
+                            </button>
+                            <button type="button" class="btn-primary" onclick="guardarTernero()">
+                                <i class="fas fa-save"></i> Guardar Ternero
+                            </button>
+                        </div>
+                    </form>
+                </section>
+            </div>
+
+            <!-- ================= PESTAÑA DE CONSULTA ================= -->
+            <div id="tab-content-consulta" class="tab-content">
+                <section class="consultation-panel">
+                    <div class="consultation-header">
+                        <h2><i class="fas fa-list"></i> Ganado Registrado</h2>
+                        <p class="subtitle">Visualiza y gestiona todos los animales registrados en el sistema</p>
+                    </div>
+
+                    <!-- Filtros y Búsqueda -->
+                    <div class="filters-section">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="search-input" placeholder="Buscar por ID, nombre o raza..."
+                                onkeyup="filtrarAnimales()">
+                            <button class="btn-icon" onclick="filtrarAnimales()" title="Buscar">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+
+                        <div class="filter-controls">
+                            <div class="filter-group">
+                                <label for="filter-type"><i class="fas fa-filter"></i> Filtrar por Tipo</label>
+                                <select id="filter-type" onchange="filtrarAnimales()">
+                                    <option value="all">Todos los animales</option>
+                                    <option value="Vaca">Vacas</option>
+                                    <option value="Toro">Toros</option>
+                                    <option value="Ternero">Terneros</option>
+                                </select>
+                            </div>
+
+                            <div class="filter-group">
+                                <label for="sort-by"><i class="fas fa-sort"></i> Ordenar por</label>
+                                <select id="sort-by" onchange="filtrarAnimales()">
+                                    <option value="id">ID (Ascendente)</option>
+                                    <option value="id-desc">ID (Descendente)</option>
+                                    <option value="nombre">Nombre (A-Z)</option>
+                                    <option value="fecha">Fecha de Registro</option>
+                                </select>
+                            </div>
+
+                            <button class="btn-secondary" onclick="resetFilters()">
+                                <i class="fas fa-redo"></i> Restablecer
+                            </button>
+
+                            <button class="btn-primary" onclick="cargarAnimales()">
+                                <i class="fas fa-sync-alt"></i> Actualizar
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Estadísticas Rápidas -->
+                    <div class="quick-stats">
+                        <div class="stat-card">
+                            <div class="stat-icon vaca">
+                                <i class="fas fa-cow"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="stat-vacas">0</h3>
+                                <p>Vacas</p>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="stat-icon toro">
+                                <i class="fas fa-horse-head"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="stat-toros">0</h3>
+                                <p>Toros</p>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="stat-icon ternero">
+                                <i class="fas fa-horse"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="stat-terneros">0</h3>
+                                <p>Terneros</p>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="stat-icon total">
+                                <i class="fas fa-database"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="stat-total">0</h3>
+                                <p>Total Animales</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tabla de Animales -->
+                    <div class="table-container">
+                        <div class="table-header">
+                            <h3><i class="fas fa-table"></i> Lista de Animales</h3>
+                            <div class="table-actions">
+                                <span id="table-count">Mostrando 0 animales</span>
+                                <button class="btn-icon" onclick="exportarDatos()" title="Exportar datos">
+                                    <i class="fas fa-download"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="table-wrapper">
+                            <table id="animals-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Tipo</th>
+                                        <th>Nombre</th>
+                                        <th>Raza</th>
+                                        <th>Edad</th>
+                                        <th>Información Específica</th>
+                                        <th>Fecha Registro</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="animals-table-body">
+                                    <!-- Los datos se cargarán aquí dinámicamente -->
+                                    <tr>
+                                        <td colspan="8" class="no-data">
+                                            <i class="fas fa-spinner fa-spin"></i> Cargando animales...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Paginación -->
+                        <div class="pagination">
+                            <button class="btn-pagination" onclick="cambiarPagina(-1)" disabled id="prev-page">
+                                <i class="fas fa-chevron-left"></i> Anterior
+                            </button>
+                            <span id="page-info">Página 1 de 1</span>
+                            <button class="btn-pagination" onclick="cambiarPagina(1)" disabled id="next-page">
+                                Siguiente <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Vista Detallada (Modal) -->
+                    <div id="animal-detail-modal" class="modal hidden">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h3 id="modal-title">Detalles del Animal</h3>
+                                <button class="btn-close" onclick="cerrarModal()">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                            <div class="modal-body" id="modal-body">
+                                <!-- Los detalles se cargarán aquí -->
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn-secondary" onclick="cerrarModal()">
+                                    <i class="fas fa-times"></i> Cerrar
+                                </button>
+                                <button class="btn-primary" id="btn-editar" onclick="editarAnimal()">
+                                    <i class="fas fa-edit"></i> Editar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ================= PESTAÑA DE ESTADÍSTICAS ================= -->
+            <div id="tab-content-estadisticas" class="tab-content">
+                <section class="stats-panel">
+                    <div class="stats-header">
+                        <h2><i class="fas fa-chart-bar"></i> Estadísticas del Ganado</h2>
+                        <p class="subtitle">Análisis y visualización de datos del inventario ganadero</p>
+                    </div>
+
+                    <div class="stats-loading" id="stats-loading">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        <p>Cargando estadísticas...</p>
+                    </div>
+
+                    <div class="stats-grid" id="stats-grid" style="display: none;">
+                        <!-- Gráficos y estadísticas se cargarán aquí -->
+                        <div class="stats-row">
+                            <div class="stat-chart-container">
+                                <h3><i class="fas fa-chart-pie"></i> Distribución por Tipo</h3>
+                                <div class="chart-container">
+                                    <canvas id="chart-type-distribution"></canvas>
+                                </div>
+                            </div>
+
+                            <div class="stat-chart-container">
+                                <h3><i class="fas fa-chart-bar"></i> Razas Más Comunes</h3>
+                                <div class="chart-container">
+                                    <canvas id="chart-breeds"></canvas>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="stats-row">
+                            <div class="stat-card-large">
+                                <h3><i class="fas fa-calendar-alt"></i> Resumen Mensual</h3>
+                                <div class="stats-summary">
+                                    <div class="summary-item">
+                                        <span class="summary-label">Registros este mes:</span>
+                                        <span class="summary-value" id="month-registrations">0</span>
+                                    </div>
+                                    <div class="summary-item">
+                                        <span class="summary-label">Terneros nacidos:</span>
+                                        <span class="summary-value" id="month-calves">0</span>
+                                    </div>
+                                    <div class="summary-item">
+                                        <span class="summary-label">Promedio de edad:</span>
+                                        <span class="summary-value" id="avg-age">0 años</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="stat-card-large">
+                                <h3><i class="fas fa-info-circle"></i> Información General</h3>
+                                <div class="stats-summary">
+                                    <div class="summary-item">
+                                        <span class="summary-label">Vaca más vieja:</span>
+                                        <span class="summary-value" id="oldest-cow">-</span>
+                                    </div>
+                                    <div class="summary-item">
+                                        <span class="summary-label">Toro principal:</span>
+                                        <span class="summary-value" id="main-bull">-</span>
+                                    </div>
+                                    <div class="summary-item">
+                                        <span class="summary-label">Último registro:</span>
+                                        <span class="summary-value" id="last-registration">-</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="stats-row full-width">
+                            <div class="stat-card-full">
+                                <h3><i class="fas fa-chart-line"></i> Evolución de Registros</h3>
+                                <div class="chart-container-large">
+                                    <canvas id="chart-registration-trend"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Mensaje de Confirmación -->
+            <div id="confirmation-message" class="confirmation-message hidden">
+                <div class="message-content">
+                    <i class="fas fa-check-circle"></i>
+                    <h3>¡Registro Exitoso!</h3>
+                    <p id="confirmation-text">El animal ha sido registrado correctamente en el sistema.</p>
+                    <button class="btn-primary" onclick="cerrarConfirmacion()">
+                        <i class="fas fa-check"></i> Continuar
+                    </button>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Sistema de Gestión Ganadera &copy; <span id="current-year"></span> - Todos los derechos reservados</p>
+            <div class="footer-stats">
+                <span><i class="fas fa-database"></i> Base de datos Supabase</span>
+                <span><i class="fas fa-shield-alt"></i> Sistema Seguro</span>
+                <span><i class="fas fa-sync-alt"></i> Actualizado en tiempo real</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Mensaje de Error -->
+    <div id="error-message" class="error-message hidden">
+        <div class="error-content">
+            <i class="fas fa-exclamation-triangle"></i>
+            <h3 id="error-title">¡Error!</h3>
+            <p id="error-text">Ha ocurrido un error en el sistema.</p>
+            <div id="error-details" class="error-details"></div>
+            <div class="error-buttons">
+                <button class="btn-error btn-error-secondary" onclick="cerrarError()">
+                    <i class="fas fa-times"></i> Cerrar
+                </button>
+                <button class="btn-error btn-error-primary" onclick="reintentarOperacion()">
+                    <i class="fas fa-redo"></i> Reintentar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mensaje de Advertencia -->
+    <div id="warning-message" class="warning-message hidden">
+        <div class="warning-content">
+            <i class="fas fa-exclamation-circle"></i>
+            <h3 id="warning-title">Advertencia</h3>
+            <p id="warning-text">Por favor, verifica la información.</p>
+            <div id="warning-details" class="error-details"></div>
+            <div class="error-buttons">
+                <button class="btn-error btn-error-secondary" onclick="cerrarAdvertencia()">
+                    <i class="fas fa-times"></i> Cancelar
+                </button>
+                <button class="btn-error btn-error-primary" onclick="continuarOperacion()">
+                    <i class="fas fa-check"></i> Continuar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+        <div class="loading-spinner"></div>
+        <p class="loading-text" id="loading-text">Procesando...</p>
+    </div>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- JS -->
+    <script src="app.js"></script>
+</body>
+
+</html>
