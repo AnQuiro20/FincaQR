@@ -10,14 +10,158 @@ const supabaseClient = createClient(
 let ultimaOperacion = null;
 let datosPendientes = null;
 let tipoFormularioActual = null;
+let animalesCargados = [];
+let animalesFiltrados = [];
+let paginaActual = 1;
+const itemsPorPagina = 10;
+let charts = {};
+let animalAEliminar = null;
+let animalEditando = null;
+let modoEdicion = false;
+let vacasPrenadas = [];
+let prenadaEditando = null;
+
+// ================= UTILIDADES DE VALIDACIÓN Y SEGURIDAD =================
+function sanitizarTexto(texto) {
+    if (!texto) return '';
+    return String(texto)
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#x27;')
+        .replace(/\//g, '&#x2F;')
+        .trim();
+}
+
+function sanitizarNumero(numero) {
+    if (!numero && numero !== 0) return null;
+    const num = parseInt(numero);
+    return isNaN(num) ? null : num;
+}
+
+function validarFecha(fechaStr) {
+    if (!fechaStr) return { valida: false, mensaje: 'Fecha vacía' };
+    
+    try {
+        const fecha = new Date(fechaStr);
+        if (isNaN(fecha.getTime())) {
+            return { valida: false, mensaje: 'Fecha inválida' };
+        }
+        
+        const hoy = new Date();
+        hoy.setHours(0, 0, 0, 0);
+        
+        if (fecha > hoy) {
+            return { valida: false, mensaje: 'Fecha no puede ser futura' };
+        }
+        
+        if (fecha < new Date('1900-01-01')) {
+            return { valida: false, mensaje: 'Fecha muy antigua' };
+        }
+        
+        return { valida: true, fecha: fecha };
+    } catch (error) {
+        return { valida: false, mensaje: 'Error procesando fecha' };
+    }
+}
+
+function validarRango(numero, min, max, campo) {
+    if (numero === null || numero === undefined) {
+        return { valida: true, valor: null }; // Campos opcionales
+    }
+    
+    const num = parseInt(numero);
+    if (isNaN(num)) {
+        return { valida: false, mensaje: `${campo} debe ser un número` };
+    }
+    
+    if (num < min || num > max) {
+        return { valida: false, mensaje: `${campo} debe estar entre ${min} y ${max}` };
+    }
+    
+    return { valida: true, valor: num };
+}
+
+function validarLongitud(texto, maxLength, campo) {
+    if (!texto) return { valida: true, valor: '' };
+    
+    if (texto.length > maxLength) {
+        return { 
+            valida: false, 
+            mensaje: `${campo} no debe exceder ${maxLength} caracteres` 
+        };
+    }
+    
+    return { valida: true, valor: texto };
+}
+
+// Prevenir inyección SQL y XSS
+function escaparEntrada(valor) {
+    if (typeof valor !== 'string') return valor;
+    
+    return valor
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r')
+        .replace(/\t/g, '\\t');
+}
+
+// Validar formato de ID
+function validarFormatoId(id) {
+    if (!id && id !== 0) {
+        return { valida: false, mensaje: 'ID es requerido' };
+    }
+    
+    const idNum = parseInt(id);
+    if (isNaN(idNum)) {
+        return { valida: false, mensaje: 'ID debe ser un número' };
+    }
+    
+    if (idNum <= 0) {
+        return { valida: false, mensaje: 'ID debe ser mayor que 0' };
+    }
+    
+    if (idNum > 999999) {
+        return { valida: false, mensaje: 'ID demasiado grande' };
+    }
+    
+    return { valida: true, valor: idNum };
+}
+
+// Timeout para operaciones asíncronas
+async function ejecutarConTimeout(promise, tiempoMs = 10000, mensajeError = 'Tiempo de espera agotado') {
+    const timeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(mensajeError)), tiempoMs)
+    );
+    
+    return Promise.race([promise, timeout]);
+}
+
+// Validar conexión a Supabase
+async function verificarConexionSupabase() {
+    try {
+        const { data, error } = await ejecutarConTimeout(
+            supabaseClient.from('animales').select('count').limit(1),
+            5000,
+            'Timeout al conectar con la base de datos'
+        );
+        
+        if (error) throw error;
+        return { conectado: true };
+    } catch (error) {
+        console.error('Error de conexión:', error);
+        return { 
+            conectado: false, 
+            mensaje: error.message || 'Error de conexión con la base de datos' 
+        };
+    }
+}
 
 // ================= SISTEMA DE MENSAJES =================
-
-// Mostrar mensaje de error
 function mostrarError(titulo, mensaje, detalles = '') {
-    // Cerrar cualquier modal abierto primero
     cerrarAdvertencia();
-    
     document.getElementById('error-title').textContent = titulo;
     document.getElementById('error-text').textContent = mensaje;
     
@@ -30,31 +174,22 @@ function mostrarError(titulo, mensaje, detalles = '') {
     }
     
     document.getElementById('error-message').classList.remove('hidden');
-    
-    // Agregar animación de shake
     const errorContent = document.querySelector('.error-content');
     errorContent.classList.add('shake');
-    setTimeout(() => {
-        errorContent.classList.remove('shake');
-    }, 500);
+    setTimeout(() => errorContent.classList.remove('shake'), 500);
 }
 
-// Cerrar mensaje de error
 function cerrarError() {
     document.getElementById('error-message').classList.add('hidden');
 }
 
-// Reintentar última operación
 function reintentarOperacion() {
     cerrarError();
     if (ultimaOperacion && datosPendientes) {
-        setTimeout(() => {
-            ultimaOperacion(...datosPendientes);
-        }, 300);
+        setTimeout(() => ultimaOperacion(...datosPendientes), 300);
     }
 }
 
-// Mostrar advertencia
 function mostrarAdvertencia(titulo, mensaje, detalles = '', callbackContinuar = null) {
     document.getElementById('warning-title').textContent = titulo;
     document.getElementById('warning-text').textContent = mensaje;
@@ -67,37 +202,23 @@ function mostrarAdvertencia(titulo, mensaje, detalles = '', callbackContinuar = 
         detallesElement.style.display = 'none';
     }
     
-    // Guardar callback para continuar
-    window.continuarOperacion = callbackContinuar || function() {
-        cerrarAdvertencia();
-    };
+    window.continuarOperacion = callbackContinuar || function() { cerrarAdvertencia(); };
     
-    // Configurar botón de continuar
     const btnContinuar = document.querySelector('#warning-message .btn-error-primary');
     if (btnContinuar && callbackContinuar) {
-        btnContinuar.onclick = () => {
-            if (callbackContinuar) {
-                callbackContinuar();
-            }
-        };
+        btnContinuar.onclick = () => callbackContinuar();
     }
     
-    // Configurar botón de cancelar para cerrar el modal
     const btnCancelar = document.querySelector('#warning-message .btn-error-secondary');
-    if (btnCancelar) {
-        btnCancelar.onclick = cerrarAdvertencia;
-    }
+    if (btnCancelar) btnCancelar.onclick = cerrarAdvertencia;
     
     document.getElementById('warning-message').classList.remove('hidden');
 }
 
-// Cerrar advertencia
 function cerrarAdvertencia() {
     document.getElementById('warning-message').classList.add('hidden');
-    // Limpiar callbacks
     window.continuarOperacion = null;
 }
-// ================= FUNCIÓN continuarOperacion =================
 
 function continuarOperacion() {
     if (window.continuarOperacion && typeof window.continuarOperacion === 'function') {
@@ -106,20 +227,16 @@ function continuarOperacion() {
     cerrarAdvertencia();
 }
 
-// Mostrar loading
 function mostrarLoading(mensaje = 'Procesando...') {
     document.getElementById('loading-text').textContent = mensaje;
     document.getElementById('loading-overlay').classList.remove('hidden');
 }
 
-// Ocultar loading
 function ocultarLoading() {
     document.getElementById('loading-overlay').classList.add('hidden');
 }
 
 // ================= VALIDACIONES EN TIEMPO REAL =================
-
-// Validar que un ID sea único
 async function validarIdUnico(id, tipoAnimal) {
     try {
         const { data, error } = await supabaseClient
@@ -131,9 +248,7 @@ async function validarIdUnico(id, tipoAnimal) {
         
         return {
             disponible: data.length === 0,
-            mensaje: data.length === 0 
-                ? 'ID disponible' 
-                : `ID ya registrado para otro animal`
+            mensaje: data.length === 0 ? 'ID disponible' : `ID ya registrado para otro animal`
         };
     } catch (error) {
         console.error('Error validando ID:', error);
@@ -141,7 +256,6 @@ async function validarIdUnico(id, tipoAnimal) {
     }
 }
 
-// Validar que padre/madre existan
 async function validarPadreMadre(id, tipo) {
     try {
         const { data, error } = await supabaseClient
@@ -151,9 +265,7 @@ async function validarPadreMadre(id, tipo) {
         
         if (error) throw error;
         
-        if (data.length === 0) {
-            return { existe: false, mensaje: `${tipo} no encontrado` };
-        }
+        if (data.length === 0) return { existe: false, mensaje: `${tipo} no encontrado` };
         
         const animal = data[0];
         const tipoEsperado = tipo === 'Padre' ? 'Toro' : 'Vaca';
@@ -173,81 +285,48 @@ async function validarPadreMadre(id, tipo) {
 }
 
 // ================= MANEJO DE EVENTOS EN TIEMPO REAL =================
-
 document.addEventListener('DOMContentLoaded', function() {
-    // Establecer año actual en el footer
     document.getElementById('current-year').textContent = new Date().getFullYear();
     
-    // Establecer fecha mínima para fecha de nacimiento
-    const fechaInput = document.getElementById('te_fecha');
-    if (fechaInput) {
-        const today = new Date().toISOString().split('T')[0];
-        fechaInput.max = today;
-        fechaInput.min = '2000-01-01';
-    }
+    // Configurar límites de fecha
+    const fechaInputs = document.querySelectorAll('input[type="date"]');
+    const today = new Date().toISOString().split('T')[0];
     
-    // Configurar validación en tiempo real para IDs
+    fechaInputs.forEach(input => {
+        input.max = today;
+        input.min = '2000-01-01';
+    });
+    
+    // Configurar validaciones
     configurarValidacionTiempoReal();
-
-  // Agregar listener para debug
-    console.log('Sistema de ganado inicializado');
+    configurarValidacionTiempoRealMejorada();
     
-    // Exponer funciones globales para debugging
-    window.debug = {
-        animalesCargados: () => animalesCargados,
-        animalEditando: () => animalEditando,
-        modoEdicion: () => modoEdicion,
-        limpiarEstado: () => {
-            modoEdicion = false;
-            animalEditando = null;
-            console.log('Estado limpiado');
+    // Verificar conexión inicial
+    setTimeout(async () => {
+        const { conectado, mensaje } = await verificarConexionSupabase();
+        if (!conectado) {
+            mostrarToast('warning', 'Conectando...', 
+                'Verificando conexión con la base de datos');
         }
-    };
+    }, 1000);
+    
+    console.log('Sistema de ganado inicializado con validaciones mejoradas');
 });
 
 function configurarValidacionTiempoReal() {
-    // IDs de vacas
     const idVaca = document.getElementById('v_id');
-    if (idVaca) {
-        idVaca.addEventListener('input', debounce(async () => {
-            await validarCampoId(idVaca, 'v_id');
-        }, 500));
-    }
-    
-    // IDs de toros
     const idToro = document.getElementById('t_id');
-    if (idToro) {
-        idToro.addEventListener('input', debounce(async () => {
-            await validarCampoId(idToro, 't_id');
-        }, 500));
-    }
-    
-    // IDs de terneros
     const idTernero = document.getElementById('te_id');
-    if (idTernero) {
-        idTernero.addEventListener('input', debounce(async () => {
-            await validarCampoId(idTernero, 'te_id');
-        }, 500));
-    }
-    
-    // Validar padre/madre en tiempo real
     const padreInput = document.getElementById('te_padre');
     const madreInput = document.getElementById('te_madre');
     
-    if (padreInput) {
-        padreInput.addEventListener('input', debounce(async () => {
-            await validarPadreMadreCampo(padreInput, 'Padre');
-        }, 500));
-    }
-    
-    if (madreInput) {
-        madreInput.addEventListener('input', debounce(async () => {
-            await validarPadreMadreCampo(madreInput, 'Madre');
-        }, 500));
-    }
+    if (idVaca) idVaca.addEventListener('input', debounce(async () => await validarCampoId(idVaca, 'v_id'), 500));
+    if (idToro) idToro.addEventListener('input', debounce(async () => await validarCampoId(idToro, 't_id'), 500));
+    if (idTernero) idTernero.addEventListener('input', debounce(async () => await validarCampoId(idTernero, 'te_id'), 500));
+    if (padreInput) padreInput.addEventListener('input', debounce(async () => await validarPadreMadreCampo(padreInput, 'Padre'), 500));
+    if (madreInput) madreInput.addEventListener('input', debounce(async () => await validarPadreMadreCampo(madreInput, 'Madre'), 500));
 }
 
-// Debounce para evitar muchas llamadas API
 function debounce(func, wait) {
     let timeout;
     return function executedFunction(...args) {
@@ -263,17 +342,11 @@ function debounce(func, wait) {
 async function validarCampoId(input, campoId) {
     const valor = input.value.trim();
     const formGroup = input.closest('.form-group');
-    
     if (!formGroup) return;
     
-    // Limpiar estados previos
     formGroup.classList.remove('error', 'success');
-    
-    // Eliminar mensajes anteriores
     const mensajeAnterior = formGroup.querySelector('.error-text, .success-text, .validation-badge');
-    if (mensajeAnterior) {
-        mensajeAnterior.remove();
-    }
+    if (mensajeAnterior) mensajeAnterior.remove();
     
     if (!valor) {
         formGroup.classList.remove('error', 'success');
@@ -285,7 +358,6 @@ async function validarCampoId(input, campoId) {
         return;
     }
     
-    // Mostrar estado de validación
     const badge = document.createElement('div');
     badge.className = 'validation-badge checking';
     badge.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verificando...';
@@ -294,8 +366,6 @@ async function validarCampoId(input, campoId) {
     
     try {
         const resultado = await validarIdUnico(valor, obtenerTipoAnimalPorCampo(campoId));
-        
-        // Remover badge de verificación
         badge.remove();
         
         if (resultado.disponible) {
@@ -320,21 +390,13 @@ async function validarCampoId(input, campoId) {
 async function validarPadreMadreCampo(input, tipo) {
     const valor = input.value.trim();
     const formGroup = input.closest('.form-group');
-    
     if (!formGroup) return;
     
-    // Limpiar estados previos
     formGroup.classList.remove('error', 'success');
-    
-    // Eliminar mensajes anteriores
     const mensajeAnterior = formGroup.querySelector('.error-text, .success-text');
-    if (mensajeAnterior) {
-        mensajeAnterior.remove();
-    }
+    if (mensajeAnterior) mensajeAnterior.remove();
     
-    if (!valor) {
-        return;
-    }
+    if (!valor) return;
     
     if (isNaN(valor) || parseInt(valor) <= 0) {
         marcarError(formGroup, `El ID del ${tipo.toLowerCase()} debe ser un número válido`);
@@ -378,46 +440,87 @@ function marcarError(formGroup, mensaje) {
 }
 
 // ================= VALIDACIÓN DE CAMPOS MEJORADA =================
-
 async function validarCamposVaca() {
-    const id = document.getElementById('v_id').value;
-    const raza = document.getElementById('v_raza').value;
     const errores = [];
+    const advertencias = [];
     
-    if (!id.trim()) {
-        errores.push('El ID es obligatorio');
-        marcarCampoError('v_id', 'ID requerido');
-    } else if (isNaN(id) || parseInt(id) <= 0) {
-        errores.push('El ID debe ser un número válido mayor que 0');
-        marcarCampoError('v_id', 'ID inválido');
+    // Validar ID
+    const id = document.getElementById('v_id').value;
+    const validacionId = validarFormatoId(id);
+    if (!validacionId.valida) {
+        errores.push(validacionId.mensaje);
+        marcarCampoError('v_id', validacionId.mensaje);
+    } else {
+        // Verificar unicidad solo si el formato es válido
+        try {
+            const { disponible, mensaje } = await validarIdUnico(id, 'Vaca');
+            if (!disponible) {
+                errores.push(mensaje);
+                marcarCampoError('v_id', mensaje);
+            }
+        } catch (error) {
+            advertencias.push('No se pudo verificar la disponibilidad del ID');
+        }
     }
     
-    if (!raza.trim()) {
-        errores.push('La raza es obligatoria');
-        marcarCampoError('v_raza', 'Raza requerida');
+    // Validar raza
+    const raza = sanitizarTexto(document.getElementById('v_raza').value);
+    const validacionRaza = validarLongitud(raza, 50, 'Raza');
+    if (!validacionRaza.valida) {
+        errores.push(validacionRaza.mensaje);
+        marcarCampoError('v_raza', validacionRaza.mensaje);
     }
     
-    // Validar edad si se proporciona
+    // Validar nombre
+    const nombre = sanitizarTexto(document.getElementById('v_nombre').value);
+    if (nombre) {
+        const validacionNombre = validarLongitud(nombre, 100, 'Nombre');
+        if (!validacionNombre.valida) {
+            errores.push(validacionNombre.mensaje);
+            marcarCampoError('v_nombre', validacionNombre.mensaje);
+        }
+    }
+    
+    // Validar edad
     const edad = document.getElementById('v_edad').value;
-    if (edad && (isNaN(edad) || parseInt(edad) < 0 || parseInt(edad) > 30)) {
-        errores.push('La edad debe estar entre 0 y 30 años');
-        marcarCampoError('v_edad', 'Edad inválida');
+    if (edad) {
+        const validacionEdad = validarRango(edad, 0, 30, 'Edad');
+        if (!validacionEdad.valida) {
+            errores.push(validacionEdad.mensaje);
+            marcarCampoError('v_edad', validacionEdad.mensaje);
+        }
     }
     
-    // Validar partos si se proporciona
+    // Validar partos
     const partos = document.getElementById('v_partos').value;
-    if (partos && (isNaN(partos) || parseInt(partos) < 0)) {
-        errores.push('El número de partos debe ser positivo');
-        marcarCampoError('v_partos', 'Partos inválidos');
+    if (partos) {
+        const validacionPartos = validarRango(partos, 0, 50, 'Número de partos');
+        if (!validacionPartos.valida) {
+            errores.push(validacionPartos.mensaje);
+            marcarCampoError('v_partos', validacionPartos.mensaje);
+        }
     }
     
+    // Validar observaciones
+    const obs = sanitizarTexto(document.getElementById('v_obs').value);
+    if (obs) {
+        const validacionObs = validarLongitud(obs, 500, 'Observaciones');
+        if (!validacionObs.valida) {
+            errores.push(validacionObs.mensaje);
+            marcarCampoError('v_obs', validacionObs.mensaje);
+        }
+    }
+    
+    // Manejar resultados
     if (errores.length > 0) {
-        mostrarAdvertencia(
-            'Validación de Vaca',
-            'Por favor corrige los siguientes errores:',
-            errores.join('\n')
-        );
+        mostrarAdvertencia('Validación de Vaca', 
+            'Por favor corrige los siguientes errores:', 
+            errores.join('\n'));
         return false;
+    }
+    
+    if (advertencias.length > 0) {
+        console.warn('Advertencias durante validación:', advertencias);
     }
     
     return true;
@@ -441,7 +544,6 @@ async function validarCamposToro() {
         marcarCampoError('t_raza', 'Raza requerida');
     }
     
-    // Validar edad si se proporciona
     const edad = document.getElementById('t_edad').value;
     if (edad && (isNaN(edad) || parseInt(edad) < 0 || parseInt(edad) > 20)) {
         errores.push('La edad debe estar entre 0 y 20 años');
@@ -449,11 +551,7 @@ async function validarCamposToro() {
     }
     
     if (errores.length > 0) {
-        mostrarAdvertencia(
-            'Validación de Toro',
-            'Por favor corrige los siguientes errores:',
-            errores.join('\n')
-        );
+        mostrarAdvertencia('Validación de Toro', 'Por favor corrige los siguientes errores:', errores.join('\n'));
         return false;
     }
     
@@ -478,7 +576,6 @@ async function validarCamposTernero() {
         marcarCampoError('te_raza', 'Raza requerida');
     }
     
-    // Validar fecha si se proporciona
     const fecha = document.getElementById('te_fecha').value;
     if (fecha) {
         const fechaNacimiento = new Date(fecha);
@@ -489,7 +586,6 @@ async function validarCamposTernero() {
         }
     }
     
-    // Validar padre si se proporciona
     const padre = document.getElementById('te_padre').value;
     if (padre) {
         if (isNaN(padre) || parseInt(padre) <= 0) {
@@ -504,7 +600,6 @@ async function validarCamposTernero() {
         }
     }
     
-    // Validar madre si se proporciona
     const madre = document.getElementById('te_madre').value;
     if (madre) {
         if (isNaN(madre) || parseInt(madre) <= 0) {
@@ -520,11 +615,7 @@ async function validarCamposTernero() {
     }
     
     if (errores.length > 0) {
-        mostrarAdvertencia(
-            'Validación de Ternero',
-            'Por favor corrige los siguientes errores:',
-            errores.join('\n')
-        );
+        mostrarAdvertencia('Validación de Ternero', 'Por favor corrige los siguientes errores:', errores.join('\n'));
         return false;
     }
     
@@ -537,19 +628,14 @@ function marcarCampoError(campoId, mensaje) {
     
     if (formGroup) {
         formGroup.classList.add('error');
-        
-        // Eliminar mensaje anterior si existe
         const mensajeAnterior = formGroup.querySelector('.error-text');
-        if (mensajeAnterior) {
-            mensajeAnterior.remove();
-        }
+        if (mensajeAnterior) mensajeAnterior.remove();
         
         const errorMsg = document.createElement('div');
         errorMsg.className = 'error-text';
         errorMsg.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${mensaje}`;
         formGroup.appendChild(errorMsg);
         
-        // Scroll al campo con error
         input.scrollIntoView({ behavior: 'smooth', block: 'center' });
         input.focus();
     }
@@ -564,97 +650,150 @@ function limpiarErrores() {
 }
 
 // ================= FUNCIONES DE GUARDADO MEJORADAS =================
-
 async function guardarVaca() {
-    limpiarErrores();
+    const btnGuardar = document.querySelector('#form-vaca .btn-primary');
     
-    if (!await validarCamposVaca()) return;
-    
-    const id = document.getElementById('v_id').value;
-    
-    // Verificar ID único antes de proceder
-    mostrarLoading('Verificando disponibilidad del ID...');
+    // Proteger contra múltiples clics
+    if (!protegerContraClicsMultiples(btnGuardar, 3000)) {
+        return;
+    }
     
     try {
-        const validacionId = await validarIdUnico(id, 'Vaca');
-        
-        if (!validacionId.disponible) {
-            ocultarLoading();
-            mostrarAdvertencia(
-                'ID Duplicado',
-                'El ID ingresado ya está en uso',
-                validacionId.mensaje,
-                () => {
-                    document.getElementById('v_id').focus();
-                    document.getElementById('v_id').select();
-                }
-            );
+        // Verificar conexión primero
+        const { conectado, mensaje } = await verificarConexionSupabase();
+        if (!conectado) {
+            mostrarError('Error de Conexión', 
+                'No se pudo conectar con la base de datos',
+                mensaje || 'Verifica tu conexión a internet e intenta nuevamente.');
             return;
         }
         
-        mostrarLoading('Guardando vaca...');
+        limpiarErrores();
         
-        // Guardar operación para posible reintento
-        ultimaOperacion = guardarVaca;
-        datosPendientes = [];
+        if (!await validarCamposVaca()) {
+            btnGuardar.disabled = false;
+            btnGuardar.innerHTML = '<i class="fas fa-save"></i> Guardar Vaca';
+            return;
+        }
         
-        // 1. Insertar en animales
-        const { error: errorAnimal } = await supabaseClient
-            .from('animales')
-            .insert([{
-                id: parseInt(id),
-                tipo: 'Vaca'
-            }]);
+        const id = sanitizarNumero(document.getElementById('v_id').value);
+        mostrarLoading('Verificando y guardando vaca...');
+        
+        // Validación adicional de ID
+        const validacionId = await validarIdUnico(id, 'Vaca');
+        if (!validacionId.disponible) {
+            ocultarLoading();
+            mostrarAdvertencia('ID Duplicado', 
+                'El ID ingresado ya está en uso', 
+                validacionId.mensaje, 
+                () => {
+                    document.getElementById('v_id').focus();
+                    document.getElementById('v_id').select();
+                });
+            return;
+        }
+        
+        // Preparar datos sanitizados
+        const datosVaca = {
+            id: id,
+            tipo: 'Vaca',
+            raza: sanitizarTexto(document.getElementById('v_raza').value),
+            nombre: sanitizarTexto(document.getElementById('v_nombre').value) || null,
+            edad_aproximada: sanitizarNumero(document.getElementById('v_edad').value),
+            total_partos: sanitizarNumero(document.getElementById('v_partos').value),
+            observaciones: sanitizarTexto(document.getElementById('v_obs').value) || null,
+            created_at: new Date().toISOString()
+        };
+        
+        // Validar datos antes de enviar
+        if (!datosVaca.raza || datosVaca.raza.length < 2) {
+            throw new Error('La raza es requerida y debe tener al menos 2 caracteres');
+        }
+        
+        // Ejecutar en transacción
+        mostrarLoading('Guardando en base de datos...');
+        
+        const { error: errorAnimal } = await ejecutarConTimeout(
+            supabaseClient.from('animales').insert([{ 
+                id: datosVaca.id, 
+                tipo: datosVaca.tipo 
+            }]),
+            10000,
+            'Timeout al guardar en tabla animales'
+        );
         
         if (errorAnimal) {
+            // Verificar si es error de duplicado
+            if (errorAnimal.code === '23505') {
+                throw new Error(`El ID ${datosVaca.id} ya existe en la base de datos`);
+            }
             throw new Error(`Error en tabla animales: ${errorAnimal.message}`);
         }
-
-        // 2. Insertar en vacas
-        const { error: errorVaca } = await supabaseClient
-            .from('vacas')
-            .insert([{
-                id: parseInt(id),
-                raza: document.getElementById('v_raza').value,
-                nombre: document.getElementById('v_nombre').value || null,
-                edad_aproximada: document.getElementById('v_edad').value 
-                    ? parseInt(document.getElementById('v_edad').value) 
-                    : null,
-                total_partos: document.getElementById('v_partos').value 
-                    ? parseInt(document.getElementById('v_partos').value) 
-                    : null,
-                observaciones: document.getElementById('v_obs').value || null
-            }]);
+        
+        const { error: errorVaca } = await ejecutarConTimeout(
+            supabaseClient.from('vacas').insert([{
+                id: datosVaca.id,
+                raza: datosVaca.raza,
+                nombre: datosVaca.nombre,
+                edad_aproximada: datosVaca.edad_aproximada,
+                total_partos: datosVaca.total_partos,
+                observaciones: datosVaca.observaciones
+            }]),
+            10000,
+            'Timeout al guardar en tabla vacas'
+        );
         
         if (errorVaca) {
+            // Revertir la inserción en animales si falla vacas
+            await supabaseClient.from('animales').delete().eq('id', datosVaca.id);
             throw new Error(`Error en tabla vacas: ${errorVaca.message}`);
         }
         
         ocultarLoading();
         
-        const nombreVaca = document.getElementById('v_nombre').value || 'Sin nombre';
-        mostrarConfirmacion(`Vaca "${nombreVaca}" registrada correctamente con ID: ${id}`);
+        // Mostrar confirmación con datos seguros
+        const nombreSeguro = datosVaca.nombre || 'Sin nombre';
+        mostrarConfirmacion(`Vaca "${nombreSeguro}" registrada correctamente con ID: ${datosVaca.id}`);
+        
+        // Limpiar formulario y actualizar datos
         limpiarFormularioVaca();
+        await cargarAnimales();
         
     } catch (error) {
         ocultarLoading();
-        console.error('Error:', error);
+        console.error('Error crítico guardando vaca:', error);
         
-        mostrarError(
-            'Error al Guardar',
-            'No se pudo registrar la vaca en el sistema',
-            error.message
-        );
+        // Clasificar errores para mensajes más específicos
+        let titulo = 'Error al Guardar';
+        let mensaje = 'No se pudo registrar la vaca en el sistema';
+        let detalles = error.message;
+        
+        if (error.message.includes('Timeout')) {
+            titulo = 'Tiempo de Espera Agotado';
+            mensaje = 'La operación está tomando demasiado tiempo';
+            detalles = 'Por favor, verifica tu conexión e intenta nuevamente.';
+        } else if (error.message.includes('conexión') || error.message.includes('conectar')) {
+            titulo = 'Error de Conexión';
+            mensaje = 'Problema de conexión con el servidor';
+        } else if (error.message.includes('23505')) {
+            titulo = 'ID Duplicado';
+            mensaje = 'El ID ya existe en la base de datos';
+        }
+        
+        mostrarError(titulo, mensaje, detalles);
+        
+        // Restaurar botón
+        if (btnGuardar) {
+            btnGuardar.disabled = false;
+            btnGuardar.innerHTML = '<i class="fas fa-save"></i> Guardar Vaca';
+        }
     }
 }
-
 async function guardarToro() {
     limpiarErrores();
-    
     if (!await validarCamposToro()) return;
     
     const id = document.getElementById('t_id').value;
-    
     mostrarLoading('Verificando disponibilidad del ID...');
     
     try {
@@ -662,53 +801,30 @@ async function guardarToro() {
         
         if (!validacionId.disponible) {
             ocultarLoading();
-            mostrarAdvertencia(
-                'ID Duplicado',
-                'El ID ingresado ya está en uso',
-                validacionId.mensaje,
-                () => {
-                    document.getElementById('t_id').focus();
-                    document.getElementById('t_id').select();
-                }
-            );
+            mostrarAdvertencia('ID Duplicado', 'El ID ingresado ya está en uso', validacionId.mensaje, () => {
+                document.getElementById('t_id').focus();
+                document.getElementById('t_id').select();
+            });
             return;
         }
         
         mostrarLoading('Guardando toro...');
-        
         ultimaOperacion = guardarToro;
         datosPendientes = [];
         
-        // 1. Insertar en animales
-        const { error: errorAnimal } = await supabaseClient
-            .from('animales')
-            .insert([{
-                id: parseInt(id),
-                tipo: 'Toro'
-            }]);
-        
-        if (errorAnimal) {
-            throw new Error(`Error en tabla animales: ${errorAnimal.message}`);
-        }
+        const { error: errorAnimal } = await supabaseClient.from('animales').insert([{ id: parseInt(id), tipo: 'Toro' }]);
+        if (errorAnimal) throw new Error(`Error en tabla animales: ${errorAnimal.message}`);
 
-        // 2. Insertar en toros
-        const { error: errorToro } = await supabaseClient
-            .from('toros')
-            .insert([{
-                id: parseInt(id),
-                raza: document.getElementById('t_raza').value,
-                nombre: document.getElementById('t_nombre').value || null,
-                edad_aproximada: document.getElementById('t_edad').value 
-                    ? parseInt(document.getElementById('t_edad').value) 
-                    : null
-            }]);
+        const { error: errorToro } = await supabaseClient.from('toros').insert([{
+            id: parseInt(id),
+            raza: document.getElementById('t_raza').value,
+            nombre: document.getElementById('t_nombre').value || null,
+            edad_aproximada: document.getElementById('t_edad').value ? parseInt(document.getElementById('t_edad').value) : null
+        }]);
         
-        if (errorToro) {
-            throw new Error(`Error en tabla toros: ${errorToro.message}`);
-        }
+        if (errorToro) throw new Error(`Error en tabla toros: ${errorToro.message}`);
         
         ocultarLoading();
-        
         const nombreToro = document.getElementById('t_nombre').value || 'Sin nombre';
         mostrarConfirmacion(`Toro "${nombreToro}" registrado correctamente con ID: ${id}`);
         limpiarFormularioToro();
@@ -716,22 +832,15 @@ async function guardarToro() {
     } catch (error) {
         ocultarLoading();
         console.error('Error:', error);
-        
-        mostrarError(
-            'Error al Guardar',
-            'No se pudo registrar el toro en el sistema',
-            error.message
-        );
+        mostrarError('Error al Guardar', 'No se pudo registrar el toro en el sistema', error.message);
     }
 }
 
 async function guardarTernero() {
     limpiarErrores();
-    
     if (!await validarCamposTernero()) return;
     
     const id = document.getElementById('te_id').value;
-    
     mostrarLoading('Verificando disponibilidad del ID...');
     
     try {
@@ -739,57 +848,36 @@ async function guardarTernero() {
         
         if (!validacionId.disponible) {
             ocultarLoading();
-            mostrarAdvertencia(
-                'ID Duplicado',
-                'El ID ingresado ya está en uso',
-                validacionId.mensaje,
-                () => {
-                    document.getElementById('te_id').focus();
-                    document.getElementById('te_id').select();
-                }
-            );
+            mostrarAdvertencia('ID Duplicado', 'El ID ingresado ya está en uso', validacionId.mensaje, () => {
+                document.getElementById('te_id').focus();
+                document.getElementById('te_id').select();
+            });
             return;
         }
         
         mostrarLoading('Guardando ternero...');
-        
         ultimaOperacion = guardarTernero;
         datosPendientes = [];
         
-        // 1. Insertar en animales
-        const { error: errorAnimal } = await supabaseClient
-            .from('animales')
-            .insert([{
-                id: parseInt(id),
-                tipo: 'Ternero'
-            }]);
-        
-        if (errorAnimal) {
-            throw new Error(`Error en tabla animales: ${errorAnimal.message}`);
-        }
+        const { error: errorAnimal } = await supabaseClient.from('animales').insert([{ id: parseInt(id), tipo: 'Ternero' }]);
+        if (errorAnimal) throw new Error(`Error en tabla animales: ${errorAnimal.message}`);
 
-        // 2. Insertar en terneros
         const padreValue = document.getElementById('te_padre').value;
         const madreValue = document.getElementById('te_madre').value;
         
-        const { error: errorTernero } = await supabaseClient
-            .from('terneros')
-            .insert([{
-                id: parseInt(id),
-                raza: document.getElementById('te_raza').value,
-                nombre: document.getElementById('te_nombre').value || null,
-                genero: document.getElementById('te_genero').value,
-                fecha_nacimiento: document.getElementById('te_fecha').value || null,
-                padre: padreValue && !isNaN(padreValue) ? parseInt(padreValue) : null,
-                madre: madreValue && !isNaN(madreValue) ? parseInt(madreValue) : null
-            }]);
+        const { error: errorTernero } = await supabaseClient.from('terneros').insert([{
+            id: parseInt(id),
+            raza: document.getElementById('te_raza').value,
+            nombre: document.getElementById('te_nombre').value || null,
+            genero: document.getElementById('te_genero').value,
+            fecha_nacimiento: document.getElementById('te_fecha').value || null,
+            padre: padreValue && !isNaN(padreValue) ? parseInt(padreValue) : null,
+            madre: madreValue && !isNaN(madreValue) ? parseInt(madreValue) : null
+        }]);
         
-        if (errorTernero) {
-            throw new Error(`Error en tabla terneros: ${errorTernero.message}`);
-        }
+        if (errorTernero) throw new Error(`Error en tabla terneros: ${errorTernero.message}`);
         
         ocultarLoading();
-        
         const nombreTernero = document.getElementById('te_nombre').value || 'Sin nombre';
         mostrarConfirmacion(`Ternero/a "${nombreTernero}" registrado correctamente con ID: ${id}`);
         limpiarFormularioTernero();
@@ -797,121 +885,75 @@ async function guardarTernero() {
     } catch (error) {
         ocultarLoading();
         console.error('Error:', error);
-        
-        mostrarError(
-            'Error al Guardar',
-            'No se pudo registrar el ternero en el sistema',
-            error.message
-        );
+        mostrarError('Error al Guardar', 'No se pudo registrar el ternero en el sistema', error.message);
     }
 }
 
 // ================= FUNCIONES DE ACTUALIZACIÓN =================
-
 async function actualizarVaca(id) {
     console.log('Actualizando vaca ID:', id);
-    
     if (!await validarCamposVaca()) return;
     
     try {
         mostrarLoading('Actualizando vaca...');
-        
         const datosActualizados = {
             raza: document.getElementById('v_raza').value,
             nombre: document.getElementById('v_nombre').value || null,
-            edad_aproximada: document.getElementById('v_edad').value 
-                ? parseInt(document.getElementById('v_edad').value) 
-                : null,
-            total_partos: document.getElementById('v_partos').value 
-                ? parseInt(document.getElementById('v_partos').value) 
-                : null,
+            edad_aproximada: document.getElementById('v_edad').value ? parseInt(document.getElementById('v_edad').value) : null,
+            total_partos: document.getElementById('v_partos').value ? parseInt(document.getElementById('v_partos').value) : null,
             observaciones: document.getElementById('v_obs').value || null
         };
         
         console.log('Datos a actualizar:', datosActualizados);
-        
-        // Actualizar en la tabla de vacas
-        const { error } = await supabaseClient
-            .from('vacas')
-            .update(datosActualizados)
-            .eq('id', id);
-        
+        const { error } = await supabaseClient.from('vacas').update(datosActualizados).eq('id', id);
         if (error) throw error;
         
-        // Actualizar lista local
         await cargarAnimales();
-        
         ocultarLoading();
-        
         mostrarConfirmacion(`Vaca actualizada correctamente`);
-        
-        // Limpiar y regresar a consulta
         cancelarEdicion();
         
     } catch (error) {
         ocultarLoading();
         console.error('Error actualizando vaca:', error);
-        mostrarError(
-            'Error al Actualizar',
-            'No se pudo actualizar la vaca',
-            error.message
-        );
+        mostrarError('Error al Actualizar', 'No se pudo actualizar la vaca', error.message);
     }
 }
 
 async function actualizarToro(id) {
     console.log('Actualizando toro ID:', id);
-    
     if (!await validarCamposToro()) return;
     
     try {
         mostrarLoading('Actualizando toro...');
-        
         const datosActualizados = {
             raza: document.getElementById('t_raza').value,
             nombre: document.getElementById('t_nombre').value || null,
-            edad_aproximada: document.getElementById('t_edad').value 
-                ? parseInt(document.getElementById('t_edad').value) 
-                : null
+            edad_aproximada: document.getElementById('t_edad').value ? parseInt(document.getElementById('t_edad').value) : null
         };
         
         console.log('Datos a actualizar:', datosActualizados);
-        
-        const { error } = await supabaseClient
-            .from('toros')
-            .update(datosActualizados)
-            .eq('id', id);
-        
+        const { error } = await supabaseClient.from('toros').update(datosActualizados).eq('id', id);
         if (error) throw error;
         
-        // Actualizar lista local
         await cargarAnimales();
-        
         ocultarLoading();
-        
         mostrarConfirmacion(`Toro actualizado correctamente`);
-        
         cancelarEdicion();
         
     } catch (error) {
         ocultarLoading();
         console.error('Error actualizando toro:', error);
-        mostrarError(
-            'Error al Actualizar',
-            'No se pudo actualizar el toro',
-            error.message
-        );
+        mostrarError('Error al Actualizar', 'No se pudo actualizar el toro', error.message);
     }
 }
 
 async function actualizarTernero(id) {
     console.log('Actualizando ternero ID:', id);
-    
     if (!await validarCamposTernero()) return;
     
     try {
         mostrarLoading('Actualizando ternero...');
-        
         const padreValue = document.getElementById('te_padre').value;
         const madreValue = document.getElementById('te_madre').value;
         
@@ -925,49 +967,31 @@ async function actualizarTernero(id) {
         };
         
         console.log('Datos a actualizar:', datosActualizados);
-        
-        const { error } = await supabaseClient
-            .from('terneros')
-            .update(datosActualizados)
-            .eq('id', id);
-        
+        const { error } = await supabaseClient.from('terneros').update(datosActualizados).eq('id', id);
         if (error) throw error;
         
-        // Actualizar lista local
         await cargarAnimales();
-        
         ocultarLoading();
-        
         mostrarConfirmacion(`Ternero actualizado correctamente`);
-        
         cancelarEdicion();
         
     } catch (error) {
         ocultarLoading();
         console.error('Error actualizando ternero:', error);
-        mostrarError(
-            'Error al Actualizar',
-            'No se pudo actualizar el ternero',
-            error.message
-        );
+        mostrarError('Error al Actualizar', 'No se pudo actualizar el ternero', error.message);
     }
 }
-// ================= FUNCIONES DE INTERFAZ EXISTENTES =================
 
+// ================= FUNCIONES DE INTERFAZ =================
 function mostrarFormulario(tipo) {
     limpiarErrores();
     
-    // Si estamos en modo edición y se selecciona otro tipo, cancelar edición
     if (modoEdicion && tipo !== animalEditando?.tipo?.toLowerCase()) {
         const confirmar = confirm('¿Desea cancelar la edición actual? Los cambios no guardados se perderán.');
-        if (confirmar) {
-            cancelarEdicion();
-        } else {
-            return;
-        }
+        if (confirmar) cancelarEdicion();
+        else return;
     }
     
-    // Si no estamos editando, proceder normalmente
     if (!modoEdicion) {
         ocultarFormularios();
         tipoFormularioActual = tipo;
@@ -978,13 +1002,7 @@ function mostrarFormulario(tipo) {
         
         if (form) {
             form.classList.remove('hidden');
-            
-            const nombres = {
-                'vaca': 'Vaca',
-                'toro': 'Toro',
-                'ternero': 'Ternero/a'
-            };
-            
+            const nombres = { 'vaca': 'Vaca', 'toro': 'Toro', 'ternero': 'Ternero/a' };
             title.textContent = `Registrar ${nombres[tipo]}`;
             subtitle.textContent = `Completa todos los campos para registrar el ${tipo.toLowerCase()}`;
             
@@ -1007,17 +1025,9 @@ function mostrarFormulario(tipo) {
 
 function ocultarFormularios() {
     console.log('Ocultando formularios');
-    
-    // Ocultar todos los formularios
-    document.querySelectorAll('.animal-form').forEach(form => {
-        form.classList.add('hidden');
-    });
-    
-    // Restaurar títulos por defecto
+    document.querySelectorAll('.animal-form').forEach(form => form.classList.add('hidden'));
     document.getElementById('form-title').textContent = 'Selecciona un tipo de animal';
     document.getElementById('form-subtitle').textContent = 'Haz clic en una de las tarjetas para comenzar el registro';
-    
-    // Quitar selección de tarjetas
     document.querySelectorAll('.animal-card').forEach(card => {
         card.classList.remove('selected');
         card.style.borderColor = '';
@@ -1026,33 +1036,23 @@ function ocultarFormularios() {
 }
 
 function mostrarConfirmacion(mensaje) {
-    // Asegurarse de que cualquier modal abierto se cierre primero
     cerrarAdvertencia();
     cerrarError();
-    
     document.getElementById('confirmation-text').textContent = mensaje;
     document.getElementById('confirmation-message').classList.remove('hidden');
     
-    // Limpiar formulario después de 3 segundos si estamos en pestaña de registro
     setTimeout(() => {
         const confirmacion = document.getElementById('confirmation-message');
-        if (confirmacion && !confirmacion.classList.contains('hidden')) {
-            cerrarConfirmacion();
-        }
+        if (confirmacion && !confirmacion.classList.contains('hidden')) cerrarConfirmacion();
     }, 3000);
 }
 
 function cerrarConfirmacion() {
     document.getElementById('confirmation-message').classList.add('hidden');
-    
-    // Solo ocultar formularios si estamos en la pestaña de registro
-    if (document.getElementById('tab-registro').classList.contains('active')) {
-        ocultarFormularios();
-    }
+    if (document.getElementById('tab-registro').classList.contains('active')) ocultarFormularios();
 }
 
 // ================= FUNCIONES DE LIMPIEZA =================
-
 function limpiarFormularioVaca() {
     ['v_id', 'v_raza', 'v_nombre', 'v_edad', 'v_partos', 'v_obs'].forEach(id => {
         const element = document.getElementById(id);
@@ -1061,12 +1061,8 @@ function limpiarFormularioVaca() {
             element.disabled = false;
         }
     });
-    
-    // Eliminar botón de cancelar edición si existe
     const btnCancelar = document.querySelector('#form-vaca #btn-cancelar-edicion');
-    if (btnCancelar) {
-        btnCancelar.remove();
-    }
+    if (btnCancelar) btnCancelar.remove();
 }
 
 function limpiarFormularioToro() {
@@ -1077,11 +1073,8 @@ function limpiarFormularioToro() {
             element.disabled = false;
         }
     });
-    
     const btnCancelar = document.querySelector('#form-toro #btn-cancelar-edicion');
-    if (btnCancelar) {
-        btnCancelar.remove();
-    }
+    if (btnCancelar) btnCancelar.remove();
 }
 
 function limpiarFormularioTernero() {
@@ -1093,108 +1086,33 @@ function limpiarFormularioTernero() {
         }
     });
     document.getElementById('te_genero').value = 'Macho';
-    
     const btnCancelar = document.querySelector('#form-ternero #btn-cancelar-edicion');
-    if (btnCancelar) {
-        btnCancelar.remove();
-    }
+    if (btnCancelar) btnCancelar.remove();
 }
 
 // ================= SISTEMA DE PESTAÑAS =================
-
-let animalesCargados = [];
-let animalesFiltrados = [];
-let paginaActual = 1;
-const itemsPorPagina = 10;
-let charts = {};
-
 function cambiarTab(tabId) {
     console.log('Cambiando a pestaña:', tabId);
-    
-    // Ocultar todos los contenidos
-    document.querySelectorAll('.tab-content').forEach(content => {
-        content.classList.remove('active');
-    });
-    
-    // Quitar activo de todas las pestañas
-    document.querySelectorAll('.tab').forEach(tab => {
-        tab.classList.remove('active');
-    });
-    
-    // Activar nueva pestaña
+    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
     document.getElementById(`tab-${tabId}`).classList.add('active');
     document.getElementById(`tab-content-${tabId}`).classList.add('active');
     
-    // Si vamos a consulta, cargar animales
-    if (tabId === 'consulta') {
-        cargarAnimales();
-    }
-    // Si vamos a estadísticas, cargarlas
-    else if (tabId === 'estadisticas') {
-        cargarEstadisticas();
-    }
-    // Si vamos a registro, asegurarse de que esté limpio
+    if (tabId === 'consulta') cargarAnimales();
+    else if (tabId === 'estadisticas') cargarEstadisticas();
     else if (tabId === 'registro') {
         limpiarTodosLosFormularios();
         restaurarBotonesOriginales();
     }
-}
-// ================= MODIFICAR FUNCIONES DE LIMPIEZA =================
-
-function limpiarFormularioVaca() {
-    ['v_id', 'v_raza', 'v_nombre', 'v_edad', 'v_partos', 'v_obs'].forEach(id => {
-        const element = document.getElementById(id);
-        if (element) {
-            element.value = '';
-            element.disabled = false;
-        }
-    });
-    
-    // Eliminar botón de cancelar edición si existe
-    const btnCancelar = document.querySelector('#form-vaca #btn-cancelar-edicion');
-    if (btnCancelar) {
-        btnCancelar.remove();
-    }
-}
-
-function limpiarFormularioToro() {
-    ['t_id', 't_raza', 't_nombre', 't_edad'].forEach(id => {
-        const element = document.getElementById(id);
-        if (element) {
-            element.value = '';
-            element.disabled = false;
-        }
-    });
-    
-    const btnCancelar = document.querySelector('#form-toro #btn-cancelar-edicion');
-    if (btnCancelar) {
-        btnCancelar.remove();
-    }
-}
-
-function limpiarFormularioTernero() {
-    ['te_id', 'te_raza', 'te_nombre', 'te_fecha', 'te_padre', 'te_madre'].forEach(id => {
-        const element = document.getElementById(id);
-        if (element) {
-            element.value = '';
-            element.disabled = false;
-        }
-    });
-    document.getElementById('te_genero').value = 'Macho';
-    
-    const btnCancelar = document.querySelector('#form-ternero #btn-cancelar-edicion');
-    if (btnCancelar) {
-        btnCancelar.remove();
-    }
+    else if (tabId === 'prenadas') cargarPrenadas();
+    else if (tabId === 'historial') cargarHistorialPartos(); // NUEVO
 }
 
 // ================= GESTIÓN DE ANIMALES REGISTRADOS =================
-
 async function cargarAnimales() {
     mostrarLoading('Cargando animales registrados...');
     
     try {
-        // Cargar todos los animales con sus detalles específicos
         const { data: animales, error: errorAnimales } = await supabaseClient
             .from('animales')
             .select('*')
@@ -1202,81 +1120,49 @@ async function cargarAnimales() {
         
         if (errorAnimales) throw errorAnimales;
         
-        // Para cada animal, cargar sus detalles específicos
-        const animalesCompletos = await Promise.all(
-            animales.map(async (animal) => {
-                let detalles = {};
-                
-                try {
-                    switch (animal.tipo) {
-                        case 'Vaca':
-                            const { data: vaca } = await supabaseClient
-                                .from('vacas')
-                                .select('*')
-                                .eq('id', animal.id)
-                                .single();
-                            detalles = vaca || {};
-                            break;
-                            
-                        case 'Toro':
-                            const { data: toro } = await supabaseClient
-                                .from('toros')
-                                .select('*')
-                                .eq('id', animal.id)
-                                .single();
-                            detalles = toro || {};
-                            break;
-                            
-                        case 'Ternero':
-                            const { data: ternero } = await supabaseClient
-                                .from('terneros')
-                                .select('*')
-                                .eq('id', animal.id)
-                                .single();
-                            detalles = ternero || {};
-                            break;
-                    }
-                } catch (error) {
-                    // Si hay error al cargar detalles específicos, usar datos básicos
-                    console.warn(`Error cargando detalles para animal ${animal.id}:`, error);
+        const animalesCompletos = await Promise.all(animales.map(async (animal) => {
+            let detalles = {};
+            try {
+                switch (animal.tipo) {
+                    case 'Vaca':
+                        const { data: vaca } = await supabaseClient.from('vacas').select('*').eq('id', animal.id).single();
+                        detalles = vaca || {};
+                        break;
+                    case 'Toro':
+                        const { data: toro } = await supabaseClient.from('toros').select('*').eq('id', animal.id).single();
+                        detalles = toro || {};
+                        break;
+                    case 'Ternero':
+                        const { data: ternero } = await supabaseClient.from('terneros').select('*').eq('id', animal.id).single();
+                        detalles = ternero || {};
+                        break;
                 }
-                
-                return {
-                    ...animal,
-                    ...detalles,
-                    fecha_registro: animal.created_at ? 
-                        new Date(animal.created_at).toLocaleDateString('es-ES', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric'
-                        }) : 'No registrada'
-                };
-            })
-        );
+            } catch (error) {
+                console.warn(`Error cargando detalles para animal ${animal.id}:`, error);
+            }
+            
+            return {
+                ...animal,
+                ...detalles,
+                fecha_prenada: animal.created_at ? new Date(animal.created_at).toLocaleDateString('es-ES', {
+                    day: '2-digit', month: '2-digit', year: 'numeric'
+                }) : 'No registrada'
+            };
+        }));
         
         animalesCargados = animalesCompletos;
         animalesFiltrados = [...animalesCompletos];
-        
         actualizarEstadisticasRapidas();
         renderizarTabla();
         
     } catch (error) {
         console.error('Error cargando animales:', error);
-        
-        // Mostrar mensaje más amigable
         document.getElementById('animals-table-body').innerHTML = `
-            <tr>
-                <td colspan="8" class="no-data">
-                    <i class="fas fa-exclamation-triangle"></i> Error cargando datos: ${error.message}
-                </td>
-            </tr>
+            <tr><td colspan="8" class="no-data"><i class="fas fa-exclamation-triangle"></i> Error cargando datos: ${error.message}</td></tr>
         `;
-        
-        // Resetear arrays
         animalesCargados = [];
         animalesFiltrados = [];
         actualizarEstadisticasRapidas();
-        
     } finally {
         ocultarLoading();
     }
@@ -1299,33 +1185,21 @@ function filtrarAnimales() {
     const tipoFiltro = document.getElementById('filter-type').value;
     const orden = document.getElementById('sort-by').value;
     
-    // Aplicar filtros
     let resultados = animalesCargados.filter(animal => {
-        // Filtro por búsqueda
-        const coincideBusqueda = 
-            animal.id.toString().includes(busqueda) ||
+        const coincideBusqueda = animal.id.toString().includes(busqueda) ||
             (animal.nombre && animal.nombre.toLowerCase().includes(busqueda)) ||
             (animal.raza && animal.raza.toLowerCase().includes(busqueda));
-        
-        // Filtro por tipo
         const coincideTipo = tipoFiltro === 'all' || animal.tipo === tipoFiltro;
-        
         return coincideBusqueda && coincideTipo;
     });
     
-    // Aplicar orden
     resultados.sort((a, b) => {
         switch (orden) {
-            case 'id':
-                return a.id - b.id;
-            case 'id-desc':
-                return b.id - a.id;
-            case 'nombre':
-                return (a.nombre || '').localeCompare(b.nombre || '');
-            case 'fecha':
-                return new Date(b.created_at) - new Date(a.created_at);
-            default:
-                return 0;
+            case 'id': return a.id - b.id;
+            case 'id-desc': return b.id - a.id;
+            case 'nombre': return (a.nombre || '').localeCompare(b.nombre || '');
+            case 'fecha': return new Date(b.created_at) - new Date(a.created_at);
+            default: return 0;
         }
     });
     
@@ -1338,7 +1212,6 @@ function resetFilters() {
     document.getElementById('search-input').value = '';
     document.getElementById('filter-type').value = 'all';
     document.getElementById('sort-by').value = 'id';
-    
     animalesFiltrados = [...animalesCargados];
     paginaActual = 1;
     renderizarTabla();
@@ -1346,63 +1219,38 @@ function resetFilters() {
 
 function renderizarTabla() {
     const tbody = document.getElementById('animals-table-body');
-    
-    if (!tbody) return; // Salir si el elemento no existe
+    if (!tbody) return;
     
     if (animalesFiltrados.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="8" class="no-data">
-                    <i class="fas fa-search"></i> No se encontraron animales
-                </td>
-            </tr>
-        `;
+        tbody.innerHTML = `<tr><td colspan="8" class="no-data"><i class="fas fa-search"></i> No se encontraron animales</td></tr>`;
         actualizarContador(0);
         actualizarPaginacion();
         return;
     }
     
-    // Calcular índices para paginación
     const inicio = (paginaActual - 1) * itemsPorPagina;
     const fin = inicio + itemsPorPagina;
     const animalesPagina = animalesFiltrados.slice(inicio, fin);
     
-    // Generar filas de la tabla
     const filasHTML = animalesPagina.map(animal => {
         const tipoClass = animal.tipo.toLowerCase();
         const infoEspecifica = obtenerInfoEspecifica(animal);
-        
-        // Escapar caracteres especiales en el nombre
         const nombreSeguro = (animal.nombre || animal.tipo).replace(/'/g, "\\'").replace(/"/g, '\\"');
         
         return `
             <tr>
                 <td><strong>#${animal.id}</strong></td>
-                <td>
-                    <span class="animal-type ${tipoClass}">
-                        <i class="fas fa-${getAnimalIcon(animal.tipo)}"></i>
-                        ${animal.tipo}
-                    </span>
-                </td>
+                <td><span class="animal-type ${tipoClass}"><i class="fas fa-${getAnimalIcon(animal.tipo)}"></i>${animal.tipo}</span></td>
                 <td>${animal.nombre || 'Sin nombre'}</td>
                 <td>${animal.raza || 'No especificada'}</td>
                 <td>${animal.edad_aproximada ? animal.edad_aproximada + ' años' : 'N/A'}</td>
                 <td>${infoEspecifica}</td>
-                <td>${animal.fecha_registro || 'N/A'}</td>
+                <td>${animal.fecha_prenada || 'N/A'}</td>
                 <td>
                     <div class="animal-actions">
-                        <button class="btn-action btn-view" onclick="verDetalles(${animal.id})" 
-                                title="Ver detalles">
-                            <i class="fas fa-eye"></i> Ver
-                        </button>
-                        <button class="btn-action btn-edit" onclick="editarAnimal(${animal.id})" 
-                                title="Editar">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button class="btn-action btn-delete" onclick="eliminarAnimal(${animal.id}, '${nombreSeguro}')" 
-                                title="Eliminar">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                        <button class="btn-action btn-view" onclick="verDetalles(${animal.id})" title="Ver detalles"><i class="fas fa-eye"></i> Ver</button>
+                        <button class="btn-action btn-edit" onclick="editarAnimal(${animal.id})" title="Editar"><i class="fas fa-edit"></i></button>
+                        <button class="btn-action btn-delete" onclick="eliminarAnimal(${animal.id}, '${nombreSeguro}')" title="Eliminar"><i class="fas fa-trash"></i></button>
                     </div>
                 </td>
             </tr>
@@ -1425,23 +1273,17 @@ function getAnimalIcon(tipo) {
 
 function obtenerInfoEspecifica(animal) {
     switch (animal.tipo) {
-        case 'Vaca':
-            return animal.total_partos ? `${animal.total_partos} partos` : 'N/A';
-        case 'Toro':
-            return animal.edad_aproximada ? `${animal.edad_aproximada} años` : 'N/A';
-        case 'Ternero':
-            return animal.genero || 'N/A';
-        default:
-            return 'N/A';
+        case 'Vaca': return animal.total_partos ? `${animal.total_partos} partos` : 'N/A';
+        case 'Toro': return animal.edad_aproximada ? `${animal.edad_aproximada} años` : 'N/A';
+        case 'Ternero': return animal.genero || 'N/A';
+        default: return 'N/A';
     }
 }
 
 function actualizarContador(total) {
     const inicio = (paginaActual - 1) * itemsPorPagina + 1;
     const fin = Math.min(paginaActual * itemsPorPagina, total);
-    
-    document.getElementById('table-count').textContent = 
-        `Mostrando ${inicio}-${fin} de ${total} animales`;
+    document.getElementById('table-count').textContent = `Mostrando ${inicio}-${fin} de ${total} animales`;
 }
 
 function actualizarPaginacion() {
@@ -1466,64 +1308,34 @@ function cambiarPagina(direccion) {
 }
 
 // ================= DETALLES DEL ANIMAL =================
-
 async function verDetalles(id) {
     mostrarLoading('Cargando detalles...');
     
     try {
-        // Buscar el animal en los datos cargados
         const animal = animalesCargados.find(a => a.id === id);
+        if (!animal) throw new Error('Animal no encontrado en la lista local');
         
-        if (!animal) {
-            throw new Error('Animal no encontrado en la lista local');
-        }
-        
-        // Verificar si aún existe en la base de datos
         try {
-            const { data: existe } = await supabaseClient
-                .from('animales')
-                .select('id')
-                .eq('id', id)
-                .single();
-                
-            if (!existe) {
-                throw new Error('El animal ya no existe en la base de datos');
-            }
+            const { data: existe } = await supabaseClient.from('animales').select('id').eq('id', id).single();
+            if (!existe) throw new Error('El animal ya no existe en la base de datos');
         } catch (error) {
-            // Si no existe, actualizar la lista local
             animalesCargados = animalesCargados.filter(a => a.id !== id);
             animalesFiltrados = animalesFiltrados.filter(a => a.id !== id);
             renderizarTabla();
             actualizarEstadisticasRapidas();
-            
             throw new Error('El animal ya no existe. La lista ha sido actualizada.');
         }
         
-        // Formatear los detalles para el modal
         const detallesHTML = crearHTMLDetalles(animal);
-        
-        document.getElementById('modal-title').textContent = 
-            `Detalles: ${animal.nombre || animal.tipo} #${animal.id}`;
+        document.getElementById('modal-title').textContent = `Detalles: ${animal.nombre || animal.tipo} #${animal.id}`;
         document.getElementById('modal-body').innerHTML = detallesHTML;
-        
-        // Actualizar botón de editar
         document.getElementById('btn-editar').onclick = () => editarAnimal(id);
-        
-        // Mostrar modal
         document.getElementById('animal-detail-modal').classList.remove('hidden');
         
     } catch (error) {
         console.error('Error cargando detalles:', error);
-        
-        if (error.message.includes('ya no existe')) {
-            mostrarConfirmacion(error.message);
-        } else {
-            mostrarError(
-                'Error de Detalles',
-                'No se pudieron cargar los detalles del animal',
-                error.message
-            );
-        }
+        if (error.message.includes('ya no existe')) mostrarConfirmacion(error.message);
+        else mostrarError('Error de Detalles', 'No se pudieron cargar los detalles del animal', error.message);
     } finally {
         ocultarLoading();
     }
@@ -1532,244 +1344,115 @@ async function verDetalles(id) {
 function crearHTMLDetalles(animal) {
     return `
         <div class="animal-details">
-            <div class="detail-row">
-                <span class="detail-label">ID:</span>
-                <span class="detail-value"><strong>#${animal.id}</strong></span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Tipo:</span>
-                <span class="detail-value">
-                    <span class="animal-type ${animal.tipo.toLowerCase()}">
-                        <i class="fas fa-${getAnimalIcon(animal.tipo)}"></i>
-                        ${animal.tipo}
-                    </span>
-                </span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Nombre:</span>
-                <span class="detail-value">${animal.nombre || 'Sin nombre'}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Raza:</span>
-                <span class="detail-value">${animal.raza || 'No especificada'}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Edad:</span>
-                <span class="detail-value">${animal.edad_aproximada ? animal.edad_aproximada + ' años' : 'N/A'}</span>
-            </div>
-            ${animal.tipo === 'Vaca' ? `
-            <div class="detail-row">
-                <span class="detail-label">Total Partos:</span>
-                <span class="detail-value">${animal.total_partos || 'N/A'}</span>
-            </div>
-            ` : ''}
+            <div class="detail-row"><span class="detail-label">ID:</span><span class="detail-value"><strong>#${animal.id}</strong></span></div>
+            <div class="detail-row"><span class="detail-label">Tipo:</span><span class="detail-value"><span class="animal-type ${animal.tipo.toLowerCase()}"><i class="fas fa-${getAnimalIcon(animal.tipo)}"></i>${animal.tipo}</span></span></div>
+            <div class="detail-row"><span class="detail-label">Nombre:</span><span class="detail-value">${animal.nombre || 'Sin nombre'}</span></div>
+            <div class="detail-row"><span class="detail-label">Raza:</span><span class="detail-value">${animal.raza || 'No especificada'}</span></div>
+            <div class="detail-row"><span class="detail-label">Edad:</span><span class="detail-value">${animal.edad_aproximada ? animal.edad_aproximada + ' años' : 'N/A'}</span></div>
+            ${animal.tipo === 'Vaca' ? `<div class="detail-row"><span class="detail-label">Total Partos:</span><span class="detail-value">${animal.total_partos || 'N/A'}</span></div>` : ''}
             ${animal.tipo === 'Ternero' ? `
-            <div class="detail-row">
-                <span class="detail-label">Género:</span>
-                <span class="detail-value">${animal.genero || 'N/A'}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Fecha Nacimiento:</span>
-                <span class="detail-value">${animal.fecha_nacimiento || 'N/A'}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Padre (ID):</span>
-                <span class="detail-value">${animal.padre ? '#' + animal.padre : 'N/A'}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Madre (ID):</span>
-                <span class="detail-value">${animal.madre ? '#' + animal.madre : 'N/A'}</span>
-            </div>
+            <div class="detail-row"><span class="detail-label">Género:</span><span class="detail-value">${animal.genero || 'N/A'}</span></div>
+            <div class="detail-row"><span class="detail-label">Fecha Nacimiento:</span><span class="detail-value">${animal.fecha_nacimiento || 'N/A'}</span></div>
+            <div class="detail-row"><span class="detail-label">Padre (ID):</span><span class="detail-value">${animal.padre ? '#' + animal.padre : 'N/A'}</span></div>
+            <div class="detail-row"><span class="detail-label">Madre (ID):</span><span class="detail-value">${animal.madre ? '#' + animal.madre : 'N/A'}</span></div>
             ` : ''}
-            ${animal.observaciones ? `
-            <div class="detail-row">
-                <span class="detail-label">Observaciones:</span>
-                <span class="detail-value">${animal.observaciones}</span>
-            </div>
-            ` : ''}
-            <div class="detail-row">
-                <span class="detail-label">Fecha Registro:</span>
-                <span class="detail-value">${animal.fecha_registro || 'N/A'}</span>
-            </div>
+            ${animal.observaciones ? `<div class="detail-row"><span class="detail-label">Observaciones:</span><span class="detail-value">${animal.observaciones}</span></div>` : ''}
+            <div class="detail-row"><span class="detail-label">Fecha Registro:</span><span class="detail-value">${animal.fecha_prenada || 'N/A'}</span></div>
         </div>
     `;
 }
 
 function cerrarModal() {
     document.getElementById('animal-detail-modal').classList.add('hidden');
-    // Limpiar el contenido del modal
     document.getElementById('modal-body').innerHTML = '';
 }
-// ================= FUNCIONES COMPLETAS DE EDICIÓN Y ELIMINACIÓN =================
-let animalAEliminar = null;
-let animalEditando = null;
-let modoEdicion = false;
 
+// ================= FUNCIONES DE EDICIÓN Y ELIMINACIÓN =================
 async function eliminarAnimal(id, nombre) {
-    // Escapar comillas en el nombre para evitar problemas en el onclick
     const nombreEscapado = nombre.replace(/'/g, "\\'").replace(/"/g, '\\"');
     
-    mostrarAdvertencia(
-        'Confirmar Eliminación',
-        `¿Estás seguro de eliminar al animal "${nombreEscapado}" (ID: ${id})?`,
+    mostrarAdvertencia('Confirmar Eliminación', `¿Estás seguro de eliminar al animal "${nombreEscapado}" (ID: ${id})?`,
         'Esta acción no se puede deshacer. Todos los datos del animal serán eliminados permanentemente.',
         async () => {
             try {
-                // Cerrar el modal de advertencia inmediatamente
                 cerrarAdvertencia();
-                
                 mostrarLoading('Eliminando animal...');
                 
-                // Obtener el tipo del animal desde la base de datos
-                const { data: animal, error: errorAnimal } = await supabaseClient
-                    .from('animales')
-                    .select('tipo')
-                    .eq('id', id)
-                    .single();
-                
+                const { data: animal, error: errorAnimal } = await supabaseClient.from('animales').select('tipo').eq('id', id).single();
                 if (errorAnimal) {
-                    // Si el animal ya no existe, limpiar y salir
                     if (errorAnimal.code === 'PGRST116') {
                         ocultarLoading();
-                        
-                        // Actualizar la lista para reflejar que ya no está
                         animalesCargados = animalesCargados.filter(a => a.id !== id);
                         animalesFiltrados = animalesFiltrados.filter(a => a.id !== id);
                         renderizarTabla();
                         actualizarEstadisticasRapidas();
-                        
                         mostrarConfirmacion(`El animal ya había sido eliminado. Lista actualizada.`);
                         return;
                     }
                     throw errorAnimal;
                 }
                 
-                // Verificar si el animal tiene relaciones (solo para terneros)
+                // Verificar relaciones
                 if (animal.tipo === 'Ternero') {
-                    // Verificar si este ternero es padre o madre de otros terneros
-                    const { data: ternerosComoPadre } = await supabaseClient
-                        .from('terneros')
-                        .select('id')
-                        .eq('padre', id);
-                    
-                    const { data: ternerosComoMadre } = await supabaseClient
-                        .from('terneros')
-                        .select('id')
-                        .eq('madre', id);
-                    
-                    if (ternerosComoPadre && ternerosComoPadre.length > 0) {
-                        throw new Error('No se puede eliminar este animal porque es padre de otros terneros');
-                    }
-                    
-                    if (ternerosComoMadre && ternerosComoMadre.length > 0) {
-                        throw new Error('No se puede eliminar este animal porque es madre de otros terneros');
-                    }
+                    const { data: ternerosComoPadre } = await supabaseClient.from('terneros').select('id').eq('padre', id);
+                    const { data: ternerosComoMadre } = await supabaseClient.from('terneros').select('id').eq('madre', id);
+                    if (ternerosComoPadre && ternerosComoPadre.length > 0) throw new Error('No se puede eliminar este animal porque es padre de otros terneros');
+                    if (ternerosComoMadre && ternerosComoMadre.length > 0) throw new Error('No se puede eliminar este animal porque es madre de otros terneros');
                 }
                 
-                // Verificar si es vaca con terneros
                 if (animal.tipo === 'Vaca') {
-                    const { data: ternerosDeVaca } = await supabaseClient
-                        .from('terneros')
-                        .select('id')
-                        .eq('madre', id);
-                    
-                    if (ternerosDeVaca && ternerosDeVaca.length > 0) {
-                        throw new Error('No se puede eliminar esta vaca porque tiene terneros registrados');
-                    }
+                    const { data: ternerosDeVaca } = await supabaseClient.from('terneros').select('id').eq('madre', id);
+                    if (ternerosDeVaca && ternerosDeVaca.length > 0) throw new Error('No se puede eliminar esta vaca porque tiene terneros registrados');
                 }
                 
-                // Verificar si es toro con terneros
                 if (animal.tipo === 'Toro') {
-                    const { data: ternerosDeToro } = await supabaseClient
-                        .from('terneros')
-                        .select('id')
-                        .eq('padre', id);
-                    
-                    if (ternerosDeToro && ternerosDeToro.length > 0) {
-                        throw new Error('No se puede eliminar este toro porque es padre de otros terneros');
-                    }
+                    const { data: ternerosDeToro } = await supabaseClient.from('terneros').select('id').eq('padre', id);
+                    if (ternerosDeToro && ternerosDeToro.length > 0) throw new Error('No se puede eliminar este toro porque es padre de otros terneros');
                 }
                 
-                // Eliminar de la tabla específica primero
+                // Eliminar de tabla específica
                 let errorEspecifico = null;
-                
                 switch (animal.tipo) {
                     case 'Vaca':
-                        const { error: errorVaca } = await supabaseClient
-                            .from('vacas')
-                            .delete()
-                            .eq('id', id);
+                        const { error: errorVaca } = await supabaseClient.from('vacas').delete().eq('id', id);
                         errorEspecifico = errorVaca;
                         break;
-                        
                     case 'Toro':
-                        const { error: errorToro } = await supabaseClient
-                            .from('toros')
-                            .delete()
-                            .eq('id', id);
+                        const { error: errorToro } = await supabaseClient.from('toros').delete().eq('id', id);
                         errorEspecifico = errorToro;
                         break;
-                        
                     case 'Ternero':
-                        const { error: errorTernero } = await supabaseClient
-                            .from('terneros')
-                            .delete()
-                            .eq('id', id);
+                        const { error: errorTernero } = await supabaseClient.from('terneros').delete().eq('id', id);
                         errorEspecifico = errorTernero;
                         break;
                 }
                 
-                if (errorEspecifico && errorEspecifico.code !== 'PGRST116') {
-                    throw errorEspecifico;
-                }
+                if (errorEspecifico && errorEspecifico.code !== 'PGRST116') throw errorEspecifico;
                 
-                // Eliminar de la tabla general
-                const { error: errorGeneral } = await supabaseClient
-                    .from('animales')
-                    .delete()
-                    .eq('id', id);
+                // Eliminar de tabla general
+                const { error: errorGeneral } = await supabaseClient.from('animales').delete().eq('id', id);
+                if (errorGeneral && errorGeneral.code !== 'PGRST116') throw errorGeneral;
                 
-                if (errorGeneral && errorGeneral.code !== 'PGRST116') {
-                    throw errorGeneral;
-                }
-                
-                // Actualizar la lista en memoria
                 animalesCargados = animalesCargados.filter(a => a.id !== id);
                 animalesFiltrados = animalesFiltrados.filter(a => a.id !== id);
-                
                 ocultarLoading();
-                
-                // Mostrar confirmación de éxito
                 mostrarConfirmacion(`Animal "${nombreEscapado}" eliminado correctamente.`);
-                
-                // Actualizar la tabla
                 renderizarTabla();
                 actualizarEstadisticasRapidas();
                 
             } catch (error) {
                 ocultarLoading();
                 console.error('Error eliminando animal:', error);
-                
                 if (error.message.includes('No se puede eliminar')) {
-                    mostrarError(
-                        'No se puede eliminar',
-                        error.message,
-                        'Este animal tiene relaciones con otros registros. Elimina primero los animales relacionados.'
-                    );
+                    mostrarError('No se puede eliminar', error.message, 'Este animal tiene relaciones con otros registros. Elimina primero los animales relacionados.');
                 } else if (error.code === 'PGRST116') {
-                    // El animal ya no existe
                     animalesCargados = animalesCargados.filter(a => a.id !== id);
                     animalesFiltrados = animalesFiltrados.filter(a => a.id !== id);
                     renderizarTabla();
                     actualizarEstadisticasRapidas();
-                    
                     mostrarConfirmacion(`El animal ya había sido eliminado. Lista actualizada.`);
                 } else {
-                    mostrarError(
-                        'Error al Eliminar',
-                        'No se pudo eliminar el animal',
-                        error.message
-                    );
+                    mostrarError('Error al Eliminar', 'No se pudo eliminar el animal', error.message);
                 }
             }
         }
@@ -1782,90 +1465,50 @@ function limpiarReferenciaEliminacion() {
 
 async function editarAnimal(id) {
     try {
-        // Cerrar cualquier modal abierto
         cerrarModal();
         cerrarTodosLosModales();
-        
         console.log('Iniciando edición para ID:', id);
         
-        // Obtener datos básicos del animal
-        const { data: animalBasico, error: errorBasico } = await supabaseClient
-            .from('animales')
-            .select('*')
-            .eq('id', id)
-            .single();
-        
+        const { data: animalBasico, error: errorBasico } = await supabaseClient.from('animales').select('*').eq('id', id).single();
         if (errorBasico) {
             console.error('Error obteniendo datos básicos:', errorBasico);
             throw new Error('Animal no encontrado');
         }
         
         console.log('Animal básico encontrado:', animalBasico);
-        
-        // Obtener datos específicos según el tipo
         let detalles = {};
         const tipo = animalBasico.tipo.toLowerCase();
         
         switch (animalBasico.tipo) {
             case 'Vaca':
-                const { data: vaca } = await supabaseClient
-                    .from('vacas')
-                    .select('*')
-                    .eq('id', id)
-                    .single();
+                const { data: vaca } = await supabaseClient.from('vacas').select('*').eq('id', id).single();
                 if (vaca) detalles = vaca;
                 break;
-                
             case 'Toro':
-                const { data: toro } = await supabaseClient
-                    .from('toros')
-                    .select('*')
-                    .eq('id', id)
-                    .single();
+                const { data: toro } = await supabaseClient.from('toros').select('*').eq('id', id).single();
                 if (toro) detalles = toro;
                 break;
-                
             case 'Ternero':
-                const { data: ternero } = await supabaseClient
-                    .from('terneros')
-                    .select('*')
-                    .eq('id', id)
-                    .single();
+                const { data: ternero } = await supabaseClient.from('terneros').select('*').eq('id', id).single();
                 if (ternero) detalles = ternero;
                 break;
         }
         
-        // Combinar datos
         const animalCompleto = { ...animalBasico, ...detalles };
         console.log('Datos completos del animal:', animalCompleto);
-        
-        // Cambiar a la pestaña de registro
         cambiarTab('registro');
         
-        // Esperar a que la pestaña se cargue
-        setTimeout(() => {
-            mostrarFormularioEdicion(tipo, animalCompleto);
-        }, 100);
+        setTimeout(() => mostrarFormularioEdicion(tipo, animalCompleto), 100);
         
     } catch (error) {
         console.error('Error en editarAnimal:', error);
-        mostrarError(
-            'Error al editar',
-            'No se pudo cargar el animal para edición',
-            error.message
-        );
+        mostrarError('Error al editar', 'No se pudo cargar el animal para edición', error.message);
     }
 }
 
 function mostrarFormularioEdicion(tipo, datos) {
     console.log('Mostrando formulario de edición para:', tipo, datos);
-    
-    // Primero ocultar todos los formularios
-    document.querySelectorAll('.animal-form').forEach(form => {
-        form.classList.add('hidden');
-    });
-    
-    // Mostrar el formulario correspondiente
+    document.querySelectorAll('.animal-form').forEach(form => form.classList.add('hidden'));
     const formulario = document.getElementById(`form-${tipo}`);
     if (!formulario) {
         console.error('Formulario no encontrado:', `form-${tipo}`);
@@ -1874,38 +1517,24 @@ function mostrarFormularioEdicion(tipo, datos) {
     }
     
     formulario.classList.remove('hidden');
-    
-    // Actualizar títulos
     document.getElementById('form-title').textContent = `Editando ${tipo} #${datos.id}`;
     document.getElementById('form-subtitle').textContent = 'Modifica los campos que necesites';
     
-    // Destacar la tarjeta correspondiente
     document.querySelectorAll('.animal-card').forEach(card => {
         card.classList.remove('selected');
-        if (card.dataset.animal === tipo) {
-            card.classList.add('selected');
-        }
+        if (card.dataset.animal === tipo) card.classList.add('selected');
     });
     
-    // Rellenar campos según el tipo
     setTimeout(() => {
         rellenarCamposFormulario(tipo, datos);
-        
-        // Configurar botones para edición
         configurarBotonesEdicion(tipo, datos.id);
-        
-        // Hacer scroll al formulario
         formulario.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        
-        // Agregar indicador visual de edición
         formulario.classList.add('editing');
-        
     }, 50);
 }
 
 function rellenarCamposFormulario(tipo, datos) {
     console.log('Rellenando campos para tipo:', tipo);
-    
     switch (tipo) {
         case 'vaca':
             document.getElementById('v_id').value = datos.id;
@@ -1916,7 +1545,6 @@ function rellenarCamposFormulario(tipo, datos) {
             document.getElementById('v_partos').value = datos.total_partos || '';
             document.getElementById('v_obs').value = datos.observaciones || '';
             break;
-            
         case 'toro':
             document.getElementById('t_id').value = datos.id;
             document.getElementById('t_id').disabled = true;
@@ -1924,7 +1552,6 @@ function rellenarCamposFormulario(tipo, datos) {
             document.getElementById('t_nombre').value = datos.nombre || '';
             document.getElementById('t_edad').value = datos.edad_aproximada || '';
             break;
-            
         case 'ternero':
             document.getElementById('te_id').value = datos.id;
             document.getElementById('te_id').disabled = true;
@@ -1938,18 +1565,11 @@ function rellenarCamposFormulario(tipo, datos) {
     }
 }
 
-// ================= FUNCIÓN PARA CONFIGURAR BOTONES DE EDICIÓN =================
-
 function configurarBotonesEdicion(tipo, id) {
     console.log('Configurando botones para edición de:', tipo, id);
-    
-    // Remover botón cancelar edición si existe
     const btnCancelarExistente = document.getElementById('btn-cancelar-edicion');
-    if (btnCancelarExistente) {
-        btnCancelarExistente.remove();
-    }
+    if (btnCancelarExistente) btnCancelarExistente.remove();
     
-    // Encontrar el botón principal del formulario
     const formulario = document.getElementById(`form-${tipo}`);
     const btnPrincipal = formulario.querySelector('.btn-primary');
     const formActions = formulario.querySelector('.form-actions');
@@ -1959,30 +1579,19 @@ function configurarBotonesEdicion(tipo, id) {
         return;
     }
     
-    // Cambiar texto y función del botón principal
     btnPrincipal.innerHTML = `<i class="fas fa-save"></i> Actualizar ${capitalizeFirstLetter(tipo)}`;
-    
     switch (tipo) {
-        case 'vaca':
-            btnPrincipal.onclick = () => actualizarVaca(id);
-            break;
-        case 'toro':
-            btnPrincipal.onclick = () => actualizarToro(id);
-            break;
-        case 'ternero':
-            btnPrincipal.onclick = () => actualizarTernero(id);
-            break;
+        case 'vaca': btnPrincipal.onclick = () => actualizarVaca(id); break;
+        case 'toro': btnPrincipal.onclick = () => actualizarToro(id); break;
+        case 'ternero': btnPrincipal.onclick = () => actualizarTernero(id); break;
     }
     
-    // Crear botón de cancelar edición
     const btnCancelar = document.createElement('button');
     btnCancelar.type = 'button';
     btnCancelar.className = 'btn-secondary';
     btnCancelar.id = 'btn-cancelar-edicion';
     btnCancelar.innerHTML = '<i class="fas fa-times"></i> Cancelar Edición';
     btnCancelar.onclick = cancelarEdicion;
-    
-    // Insertar botón cancelar antes del botón principal
     formActions.insertBefore(btnCancelar, btnPrincipal);
 }
 
@@ -1990,17 +1599,12 @@ function capitalizeFirstLetter(string) {
     return string.charAt(0).toUpperCase() + string.slice(1);
 }
 
-// ================= FUNCIÓN PARA LIMPIAR TODOS LOS FORMULARIOS =================
-
 function limpiarTodosLosFormularios() {
     console.log('Limpiando todos los formularios');
-    
-    // Habilitar campos ID
     document.getElementById('v_id').disabled = false;
     document.getElementById('t_id').disabled = false;
     document.getElementById('te_id').disabled = false;
     
-    // Limpiar valores
     document.getElementById('v_id').value = '';
     document.getElementById('v_raza').value = '';
     document.getElementById('v_nombre').value = '';
@@ -2022,358 +1626,66 @@ function limpiarTodosLosFormularios() {
     document.getElementById('te_madre').value = '';
 }
 
-// ================= FUNCIONES ESPECÍFICAS PARA RELLENAR FORMULARIOS =================
-
-function rellenarFormularioVaca(datos) {
-    console.log('Rellenando formulario de vaca con datos:', datos);
-    
-    document.getElementById('v_id').value = datos.id;
-    document.getElementById('v_id').disabled = true;
-    document.getElementById('v_raza').value = datos.raza || '';
-    document.getElementById('v_nombre').value = datos.nombre || '';
-    document.getElementById('v_edad').value = datos.edad_aproximada || '';
-    document.getElementById('v_partos').value = datos.total_partos || '';
-    document.getElementById('v_obs').value = datos.observaciones || '';
-    
-    // Cambiar texto del botón de guardar
-    const btnGuardarVaca = document.querySelector('#form-vaca .btn-primary');
-    if (btnGuardarVaca) {
-        btnGuardarVaca.innerHTML = '<i class="fas fa-save"></i> Actualizar Vaca';
-        btnGuardarVaca.onclick = () => actualizarVaca(datos.id);
-    }
-    
-    // Agregar botón de cancelar edición
-    agregarBotonCancelarEdicion('vaca');
-}
-
-function rellenarFormularioToro(datos) {
-    console.log('Rellenando formulario de toro con datos:', datos);
-    
-    document.getElementById('t_id').value = datos.id;
-    document.getElementById('t_id').disabled = true;
-    document.getElementById('t_raza').value = datos.raza || '';
-    document.getElementById('t_nombre').value = datos.nombre || '';
-    document.getElementById('t_edad').value = datos.edad_aproximada || '';
-    
-    // Cambiar texto del botón de guardar
-    const btnGuardarToro = document.querySelector('#form-toro .btn-primary');
-    if (btnGuardarToro) {
-        btnGuardarToro.innerHTML = '<i class="fas fa-save"></i> Actualizar Toro';
-        btnGuardarToro.onclick = () => actualizarToro(datos.id);
-    }
-    
-    // Agregar botón de cancelar edición
-    agregarBotonCancelarEdicion('toro');
-}
-
-function rellenarFormularioTernero(datos) {
-    console.log('Rellenando formulario de ternero con datos:', datos);
-    
-    document.getElementById('te_id').value = datos.id;
-    document.getElementById('te_id').disabled = true;
-    document.getElementById('te_raza').value = datos.raza || '';
-    document.getElementById('te_nombre').value = datos.nombre || '';
-    document.getElementById('te_genero').value = datos.genero || 'Macho';
-    document.getElementById('te_fecha').value = datos.fecha_nacimiento || '';
-    document.getElementById('te_padre').value = datos.padre || '';
-    document.getElementById('te_madre').value = datos.madre || '';
-    
-    // Cambiar texto del botón de guardar
-    const btnGuardarTernero = document.querySelector('#form-ternero .btn-primary');
-    if (btnGuardarTernero) {
-        btnGuardarTernero.innerHTML = '<i class="fas fa-save"></i> Actualizar Ternero';
-        btnGuardarTernero.onclick = () => actualizarTernero(datos.id);
-    }
-    
-    // Agregar botón de cancelar edición
-    agregarBotonCancelarEdicion('ternero');
-}
-
-function agregarBotonCancelarEdicion(tipo) {
-    const formActions = document.querySelector(`#form-${tipo} .form-actions`);
-    if (!formActions) return;
-    
-    // Eliminar botón de cancelar existente si hay
-    const btnCancelarExistente = formActions.querySelector('#btn-cancelar-edicion');
-    if (btnCancelarExistente) {
-        btnCancelarExistente.remove();
-    }
-    
-    // Crear nuevo botón de cancelar
-    const btnCancelar = document.createElement('button');
-    btnCancelar.type = 'button';
-    btnCancelar.className = 'btn-secondary';
-    btnCancelar.id = 'btn-cancelar-edicion';
-    btnCancelar.innerHTML = '<i class="fas fa-times"></i> Cancelar Edición';
-    btnCancelar.onclick = cancelarEdicion;
-    
-    // Insertar antes del botón principal
-    const btnPrincipal = formActions.querySelector('.btn-primary');
-    if (btnPrincipal) {
-        formActions.insertBefore(btnCancelar, btnPrincipal);
-    } else {
-        formActions.appendChild(btnCancelar);
-    }
-}
-
-// ================= MEJORAR FUNCIÓN mostrarFormularioParaEdicion =================
-
-function mostrarFormulario(tipo) {
-    console.log('Mostrar formulario llamado para tipo:', tipo, 'Modo edición:', modoEdicion);
-    
-    // Si estamos en modo edición, verificar si estamos editando el mismo tipo
-    if (modoEdicion) {
-        const tipoEditando = animalEditando?.tipo?.toLowerCase();
-        if (tipoEditando && tipoEditando !== tipo) {
-            const confirmar = window.confirm('¿Desea cancelar la edición actual para registrar un nuevo animal? Los cambios no guardados se perderán.');
-            if (!confirmar) {
-                return;
-            }
-            cancelarEdicion();
-        } else {
-            // Ya estamos editando este tipo, no hacer nada
-            return;
-        }
-    }
-    
-    // Proceder normalmente si no estamos editando
-    limpiarErrores();
-    ocultarFormularios();
-    tipoFormularioActual = tipo;
-    
-    const form = document.getElementById(`form-${tipo}`);
-    const title = document.getElementById('form-title');
-    const subtitle = document.getElementById('form-subtitle');
-    
-    if (form) {
-        form.classList.remove('hidden');
-        
-        const nombres = {
-            'vaca': 'Vaca',
-            'toro': 'Toro',
-            'ternero': 'Ternero/a'
-        };
-        
-        title.textContent = `Registrar ${nombres[tipo]}`;
-        subtitle.textContent = `Completa todos los campos para registrar el ${tipo.toLowerCase()}`;
-        
-        document.querySelectorAll('.animal-card').forEach(card => {
-            card.classList.remove('selected');
-            if (card.dataset.animal === tipo) {
-                card.classList.add('selected');
-                card.style.borderColor = 'var(--primary)';
-                card.style.boxShadow = '0 8px 25px rgba(46, 125, 50, 0.2)';
-            } else {
-                card.style.borderColor = '';
-                card.style.boxShadow = '';
-            }
-        });
-        
-        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-}
-
-
-function mostrarFormularioParaEdicion(tipo, datos) {
-    // Mostrar el formulario correspondiente
-    mostrarFormulario(tipo);
-    
-    // Rellenar los campos con los datos del animal
-    setTimeout(() => {
-        switch (tipo) {
-            case 'vaca':
-                document.getElementById('v_id').value = datos.id;
-                document.getElementById('v_id').disabled = true; // ID no se puede editar
-                document.getElementById('v_raza').value = datos.raza || '';
-                document.getElementById('v_nombre').value = datos.nombre || '';
-                document.getElementById('v_edad').value = datos.edad_aproximada || '';
-                document.getElementById('v_partos').value = datos.total_partos || '';
-                document.getElementById('v_obs').value = datos.observaciones || '';
-                
-                // Cambiar texto del botón
-                const btnGuardarVaca = document.querySelector('#form-vaca .btn-primary');
-                if (btnGuardarVaca) {
-                    btnGuardarVaca.innerHTML = '<i class="fas fa-save"></i> Actualizar Vaca';
-                    btnGuardarVaca.onclick = () => actualizarVaca(datos.id);
-                }
-                
-                // Agregar botón de cancelar edición
-                const formActionsVaca = document.querySelector('#form-vaca .form-actions');
-                if (!formActionsVaca.querySelector('#btn-cancelar-edicion')) {
-                    const btnCancelar = document.createElement('button');
-                    btnCancelar.type = 'button';
-                    btnCancelar.className = 'btn-secondary';
-                    btnCancelar.id = 'btn-cancelar-edicion';
-                    btnCancelar.innerHTML = '<i class="fas fa-times"></i> Cancelar Edición';
-                    btnCancelar.onclick = cancelarEdicion;
-                    formActionsVaca.appendChild(btnCancelar);
-                }
-                break;
-                
-            case 'toro':
-                document.getElementById('t_id').value = datos.id;
-                document.getElementById('t_id').disabled = true;
-                document.getElementById('t_raza').value = datos.raza || '';
-                document.getElementById('t_nombre').value = datos.nombre || '';
-                document.getElementById('t_edad').value = datos.edad_aproximada || '';
-                
-                const btnGuardarToro = document.querySelector('#form-toro .btn-primary');
-                if (btnGuardarToro) {
-                    btnGuardarToro.innerHTML = '<i class="fas fa-save"></i> Actualizar Toro';
-                    btnGuardarToro.onclick = () => actualizarToro(datos.id);
-                }
-                
-                const formActionsToro = document.querySelector('#form-toro .form-actions');
-                if (!formActionsToro.querySelector('#btn-cancelar-edicion')) {
-                    const btnCancelar = document.createElement('button');
-                    btnCancelar.type = 'button';
-                    btnCancelar.className = 'btn-secondary';
-                    btnCancelar.id = 'btn-cancelar-edicion';
-                    btnCancelar.innerHTML = '<i class="fas fa-times"></i> Cancelar Edición';
-                    btnCancelar.onclick = cancelarEdicion;
-                    formActionsToro.appendChild(btnCancelar);
-                }
-                break;
-                
-            case 'ternero':
-                document.getElementById('te_id').value = datos.id;
-                document.getElementById('te_id').disabled = true;
-                document.getElementById('te_raza').value = datos.raza || '';
-                document.getElementById('te_nombre').value = datos.nombre || '';
-                document.getElementById('te_genero').value = datos.genero || 'Macho';
-                document.getElementById('te_fecha').value = datos.fecha_nacimiento || '';
-                document.getElementById('te_padre').value = datos.padre || '';
-                document.getElementById('te_madre').value = datos.madre || '';
-                
-                const btnGuardarTernero = document.querySelector('#form-ternero .btn-primary');
-                if (btnGuardarTernero) {
-                    btnGuardarTernero.innerHTML = '<i class="fas fa-save"></i> Actualizar Ternero';
-                    btnGuardarTernero.onclick = () => actualizarTernero(datos.id);
-                }
-                
-                const formActionsTernero = document.querySelector('#form-ternero .form-actions');
-                if (!formActionsTernero.querySelector('#btn-cancelar-edicion')) {
-                    const btnCancelar = document.createElement('button');
-                    btnCancelar.type = 'button';
-                    btnCancelar.className = 'btn-secondary';
-                    btnCancelar.id = 'btn-cancelar-edicion';
-                    btnCancelar.innerHTML = '<i class="fas fa-times"></i> Cancelar Edición';
-                    btnCancelar.onclick = cancelarEdicion;
-                    formActionsTernero.appendChild(btnCancelar);
-                }
-                break;
-        }
-        
-        // Actualizar título del formulario
-        document.getElementById('form-title').textContent = `Editando ${datos.tipo.toLowerCase()} #${datos.id}`;
-        document.getElementById('form-subtitle').textContent = 'Modifica los campos que necesites';
-        
-    }, 100);
-}
-
 function cancelarEdicion() {
     console.log('Cancelando edición');
-    
-    // Remover clase de edición de todos los formularios
-    document.querySelectorAll('.animal-form').forEach(form => {
-        form.classList.remove('editing');
-    });
-    
-    // Limpiar todos los formularios
+    document.querySelectorAll('.animal-form').forEach(form => form.classList.remove('editing'));
     limpiarTodosLosFormularios();
-    
-    // Restaurar botones originales
     restaurarBotonesOriginales();
-    
-    // Ocultar formularios y mostrar selección
     ocultarFormularios();
-    
-    // Cambiar a pestaña de consulta
-    setTimeout(() => {
-        cambiarTab('consulta');
-    }, 100);
+    setTimeout(() => cambiarTab('consulta'), 100);
 }
 
 function restaurarBotonesOriginales() {
     console.log('Restaurando botones originales');
-    
-    // Restaurar botón de vaca
     const btnGuardarVaca = document.querySelector('#form-vaca .btn-primary');
     if (btnGuardarVaca) {
         btnGuardarVaca.innerHTML = '<i class="fas fa-save"></i> Guardar Vaca';
         btnGuardarVaca.onclick = guardarVaca;
     }
     
-    // Restaurar botón de toro
     const btnGuardarToro = document.querySelector('#form-toro .btn-primary');
     if (btnGuardarToro) {
         btnGuardarToro.innerHTML = '<i class="fas fa-save"></i> Guardar Toro';
         btnGuardarToro.onclick = guardarToro;
     }
     
-    // Restaurar botón de ternero
     const btnGuardarTernero = document.querySelector('#form-ternero .btn-primary');
     if (btnGuardarTernero) {
         btnGuardarTernero.innerHTML = '<i class="fas fa-save"></i> Guardar Ternero';
         btnGuardarTernero.onclick = guardarTernero;
     }
     
-    // Eliminar botones de cancelar edición
-    document.querySelectorAll('#btn-cancelar-edicion').forEach(btn => {
-        btn.remove();
-    });
+    document.querySelectorAll('#btn-cancelar-edicion').forEach(btn => btn.remove());
 }
 
 // ================= ESTADÍSTICAS =================
-
 async function cargarEstadisticas() {
     mostrarLoading('Cargando estadísticas...');
     
     try {
-        // Esperar a que se carguen los animales si no están cargados
-        if (animalesCargados.length === 0) {
-            await cargarAnimales();
-        }
-        
-        // Ocultar loading y mostrar estadísticas
+        if (animalesCargados.length === 0) await cargarAnimales();
         document.getElementById('stats-loading').style.display = 'none';
         document.getElementById('stats-grid').style.display = 'block';
-        
-        // Generar estadísticas
         generarEstadisticas();
         
     } catch (error) {
         console.error('Error cargando estadísticas:', error);
-        document.getElementById('stats-loading').innerHTML = `
-            <i class="fas fa-exclamation-triangle"></i>
-            <p>Error cargando estadísticas</p>
-        `;
+        document.getElementById('stats-loading').innerHTML = `<i class="fas fa-exclamation-triangle"></i><p>Error cargando estadísticas</p>`;
     } finally {
         ocultarLoading();
     }
 }
 
 function generarEstadisticas() {
-    // Datos para estadísticas
     const tipos = ['Vaca', 'Toro', 'Ternero'];
-    const conteoTipos = tipos.map(tipo => 
-        animalesCargados.filter(a => a.tipo === tipo).length
-    );
+    const conteoTipos = tipos.map(tipo => animalesCargados.filter(a => a.tipo === tipo).length);
     
-    // Contar razas
     const razasCount = {};
     animalesCargados.forEach(animal => {
-        if (animal.raza) {
-            razasCount[animal.raza] = (razasCount[animal.raza] || 0) + 1;
-        }
+        if (animal.raza) razasCount[animal.raza] = (razasCount[animal.raza] || 0) + 1;
     });
     
-    // Ordenar razas por frecuencia
-    const razasTop = Object.entries(razasCount)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5);
-    
-    // Calcular estadísticas mensuales
+    const razasTop = Object.entries(razasCount).sort((a, b) => b[1] - a[1]).slice(0, 5);
     const hoy = new Date();
     const mesActual = hoy.getMonth();
     const añoActual = hoy.getFullYear();
@@ -2381,75 +1693,42 @@ function generarEstadisticas() {
     const registrosEsteMes = animalesCargados.filter(animal => {
         if (!animal.created_at) return false;
         const fechaRegistro = new Date(animal.created_at);
-        return fechaRegistro.getMonth() === mesActual && 
-               fechaRegistro.getFullYear() === añoActual;
+        return fechaRegistro.getMonth() === mesActual && fechaRegistro.getFullYear() === añoActual;
     }).length;
     
-    const ternerosEsteMes = animalesCargados.filter(animal => 
-        animal.tipo === 'Ternero' && 
-        animal.created_at && 
-        new Date(animal.created_at).getMonth() === mesActual
-    ).length;
+    const ternerosEsteMes = animalesCargados.filter(animal => animal.tipo === 'Ternero' && animal.created_at && new Date(animal.created_at).getMonth() === mesActual).length;
     
-    // Calcular promedio de edad
     const animalesConEdad = animalesCargados.filter(a => a.edad_aproximada);
-    const promedioEdad = animalesConEdad.length > 0 ?
-        animalesConEdad.reduce((sum, a) => sum + a.edad_aproximada, 0) / animalesConEdad.length : 0;
+    const promedioEdad = animalesConEdad.length > 0 ? animalesConEdad.reduce((sum, a) => sum + a.edad_aproximada, 0) / animalesConEdad.length : 0;
     
-    // Encontrar vaca más vieja
     const vacas = animalesCargados.filter(a => a.tipo === 'Vaca');
-    const vacaMasVieja = vacas.reduce((vieja, actual) => 
-        (actual.edad_aproximada || 0) > (vieja.edad_aproximada || 0) ? actual : vieja, {});
+    const vacaMasVieja = vacas.reduce((vieja, actual) => (actual.edad_aproximada || 0) > (vieja.edad_aproximada || 0) ? actual : vieja, {});
     
-    // Actualizar estadísticas en la interfaz
+    const torosUsados = {};
+    animalesCargados.filter(a => a.tipo === 'Ternero' && a.padre).forEach(ternero => {
+        torosUsados[ternero.padre] = (torosUsados[ternero.padre] || 0) + 1;
+    });
+    
+    const toroPrincipalId = Object.keys(torosUsados).reduce((a, b) => torosUsados[a] > torosUsados[b] ? a : b, null);
+    const toroPrincipal = animalesCargados.find(a => a.id === parseInt(toroPrincipalId));
+    
+    const ultimoRegistro = animalesCargados.filter(a => a.created_at).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+    
     document.getElementById('month-registrations').textContent = registrosEsteMes;
     document.getElementById('month-calves').textContent = ternerosEsteMes;
     document.getElementById('avg-age').textContent = promedioEdad.toFixed(1) + ' años';
-    document.getElementById('oldest-cow').textContent = 
-        vacaMasVieja.nombre ? `${vacaMasVieja.nombre} (${vacaMasVieja.edad_aproximada} años)` : 'N/A';
+    document.getElementById('oldest-cow').textContent = vacaMasVieja.nombre ? `${vacaMasVieja.nombre} (${vacaMasVieja.edad_aproximada} años)` : 'N/A';
+    document.getElementById('main-bull').textContent = toroPrincipal ? `${toroPrincipal.nombre || 'Toro'} #${toroPrincipal.id}` : 'N/A';
+    document.getElementById('last-registration').textContent = ultimoRegistro ? `${ultimoRegistro.tipo} #${ultimoRegistro.id}` : 'N/A';
     
-    // Buscar toro más utilizado (con más terneros)
-    const torosUsados = {};
-    animalesCargados
-        .filter(a => a.tipo === 'Ternero' && a.padre)
-        .forEach(ternero => {
-            torosUsados[ternero.padre] = (torosUsados[ternero.padre] || 0) + 1;
-        });
-    
-    const toroPrincipalId = Object.keys(torosUsados).reduce((a, b) => 
-        torosUsados[a] > torosUsados[b] ? a : b, null
-    );
-    
-    const toroPrincipal = animalesCargados.find(a => a.id === parseInt(toroPrincipalId));
-    document.getElementById('main-bull').textContent = 
-        toroPrincipal ? `${toroPrincipal.nombre || 'Toro'} #${toroPrincipal.id}` : 'N/A';
-    
-    // Último registro
-    const ultimoRegistro = animalesCargados
-        .filter(a => a.created_at)
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-    
-    document.getElementById('last-registration').textContent = 
-        ultimoRegistro ? `${ultimoRegistro.tipo} #${ultimoRegistro.id}` : 'N/A';
-    
-    // Crear gráficos
     crearGraficos(conteoTipos, razasTop);
 }
 
 function crearGraficos(conteoTipos, razasTop) {
-    // Destruir gráficos anteriores si existen
-    Object.values(charts).forEach(chart => {
-        if (chart) chart.destroy();
-    });
-    
+    Object.values(charts).forEach(chart => { if (chart) chart.destroy(); });
     charts = {};
     
-    // Colores para gráficos
-    const colores = {
-        Vaca: '#2e7d32',
-        Toro: '#ff9800',
-        Ternero: '#2196f3'
-    };
+    const colores = { Vaca: '#2e7d32', Toro: '#ff9800', Ternero: '#2196f3' };
     
     // Gráfico de distribución por tipo
     const ctxTipo = document.getElementById('chart-type-distribution').getContext('2d');
@@ -2459,11 +1738,7 @@ function crearGraficos(conteoTipos, razasTop) {
             labels: ['Vacas', 'Toros', 'Terneros'],
             datasets: [{
                 data: conteoTipos,
-                backgroundColor: [
-                    colores.Vaca,
-                    colores.Toro,
-                    colores.Ternero
-                ],
+                backgroundColor: [colores.Vaca, colores.Toro, colores.Ternero],
                 borderWidth: 1
             }]
         },
@@ -2471,9 +1746,7 @@ function crearGraficos(conteoTipos, razasTop) {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'bottom'
-                },
+                legend: { position: 'bottom' },
                 tooltip: {
                     callbacks: {
                         label: function(context) {
@@ -2498,9 +1771,7 @@ function crearGraficos(conteoTipos, razasTop) {
             datasets: [{
                 label: 'Cantidad',
                 data: razasTop.map(r => r[1]),
-                backgroundColor: razasTop.map((_, i) => 
-                    `hsl(${i * 60}, 70%, 60%)`
-                ),
+                backgroundColor: razasTop.map((_, i) => `hsl(${i * 60}, 70%, 60%)`),
                 borderWidth: 1
             }]
         },
@@ -2508,22 +1779,13 @@ function crearGraficos(conteoTipos, razasTop) {
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-                y: {
-                    beginAtZero: true,
-                    ticks: {
-                        stepSize: 1
-                    }
-                }
+                y: { beginAtZero: true, ticks: { stepSize: 1 } }
             },
-            plugins: {
-                legend: {
-                    display: false
-                }
-            }
+            plugins: { legend: { display: false } }
         }
     });
     
-    // Gráfico de evolución de registros (simulado)
+    // Gráfico de evolución de registros
     const ctxEvolucion = document.getElementById('chart-registration-trend').getContext('2d');
     const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
     const registrosMensuales = new Array(12).fill(0);
@@ -2554,56 +1816,27 @@ function crearGraficos(conteoTipos, razasTop) {
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-                y: {
-                    beginAtZero: true,
-                    ticks: {
-                        stepSize: 1
-                    }
-                }
+                y: { beginAtZero: true, ticks: { stepSize: 1 } }
             },
-            plugins: {
-                legend: {
-                    position: 'top'
-                }
-            }
+            plugins: { legend: { position: 'top' } }
         }
     });
 }
 
 function exportarDatos() {
     if (animalesCargados.length === 0) {
-        mostrarAdvertencia(
-            'Sin Datos',
-            'No hay animales registrados para exportar.',
-            'Registra algunos animales primero para poder exportar los datos.'
-        );
+        mostrarAdvertencia('Sin Datos', 'No hay animales registrados para exportar.', 'Registra algunos animales primero para poder exportar los datos.');
         return;
     }
     
-    // Formatear datos para CSV
     const headers = ['ID', 'Tipo', 'Nombre', 'Raza', 'Edad', 'Género', 'Fecha Nacimiento', 'Padre', 'Madre', 'Partos', 'Observaciones', 'Fecha Registro'];
-    
     const csvData = animalesCargados.map(animal => [
-        animal.id,
-        animal.tipo,
-        animal.nombre || '',
-        animal.raza || '',
-        animal.edad_aproximada || '',
-        animal.genero || '',
-        animal.fecha_nacimiento || '',
-        animal.padre || '',
-        animal.madre || '',
-        animal.total_partos || '',
-        animal.observaciones ? `"${animal.observaciones.replace(/"/g, '""')}"` : '',
-        animal.fecha_registro || ''
+        animal.id, animal.tipo, animal.nombre || '', animal.raza || '', animal.edad_aproximada || '',
+        animal.genero || '', animal.fecha_nacimiento || '', animal.padre || '', animal.madre || '',
+        animal.total_partos || '', animal.observaciones ? `"${animal.observaciones.replace(/"/g, '""')}"` : '', animal.fecha_prenada || ''
     ]);
     
-    const csvContent = [
-        headers.join(','),
-        ...csvData.map(row => row.join(','))
-    ].join('\n');
-    
-    // Crear y descargar archivo
+    const csvContent = [headers.join(','), ...csvData.map(row => row.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -2611,43 +1844,2487 @@ function exportarDatos() {
     link.setAttribute('href', url);
     link.setAttribute('download', `ganado_${new Date().toISOString().split('T')[0]}.csv`);
     link.style.visibility = 'hidden';
-    
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
     mostrarConfirmacion('Datos exportados correctamente como CSV.');
 }
 
-// ================= INICIALIZACIÓN =================
+// ================= SISTEMA DE PRENADAS =================
+// Función para mostrar formulario de prenada (CORREGIDA)
+async function mostrarFormularioPrenada() {
+    console.log("Mostrando formulario de prenada...");
+    const modal = document.getElementById('modal-prenada');
+    
+    if (!modal) {
+        mostrarError("Error", "No se encontró el modal de prenada");
+        return;
+    }
+    
+    mostrarLoading("Cargando lista de vacas...");
+    
+    try {
+        // Cargar vacas desde Supabase
+        const { data: vacas, error } = await supabaseClient
+            .from('vacas')
+            .select('id, nombre, raza, edad_aproximada')
+            .order('nombre');
+        
+        if (error) throw error;
+        
+        // Limpiar y llenar el select de vacas
+        const selectVaca = document.getElementById('p_vaca');
+        if (!selectVaca) {
+            throw new Error("No se encontró el select de vacas (p_vaca)");
+        }
+        
+        selectVaca.innerHTML = '<option value="">Selecciona una vaca</option>';
+        
+        if (vacas && vacas.length > 0) {
+            vacas.forEach(vaca => {
+                const option = document.createElement('option');
+                option.value = vaca.id;
+                option.textContent = `#${vaca.id} - ${vaca.nombre || 'Sin nombre'} (${vaca.raza || 'Sin raza'})`;
+                selectVaca.appendChild(option);
+            });
+        } else {
+            selectVaca.innerHTML = '<option value="">No hay vacas registradas</option>';
+        }
+        
+        // Cargar toros para el padre
+        await cargarTorosParaPrenada();
+        
+        // Configurar fecha actual por defecto
+        const hoy = new Date().toISOString().split('T')[0];
+        const fechaInput = document.getElementById('p_fecha');
+        if (fechaInput) {
+            fechaInput.value = hoy;
+            fechaInput.max = hoy; // No permitir fechas futuras
+            fechaInput.min = '2000-01-01';
+        }
+        
+        // Calcular fecha estimada de parto
+        calcularFechaPartoPrenada(hoy);
+        
+        // Mostrar modal
+        modal.classList.remove('hidden');
+        ocultarLoading();
+        
+        console.log("Formulario de prenada cargado exitosamente");
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error("Error cargando formulario de prenada:", error);
+        mostrarError("Error al cargar el formulario", error.message);
+    }
+}
 
-document.addEventListener('DOMContentLoaded', function() {
-    // Establecer año actual en el footer
-    document.getElementById('current-year').textContent = new Date().getFullYear();
+// Función para calcular fecha estimada de parto (CORREGIDA)
+function calcularFechaPartoPrenada(fechaMonta) {
+    if (!fechaMonta) return;
     
-    // Establecer fecha mínima para fecha de nacimiento
-    const fechaInput = document.getElementById('te_fecha');
-    if (fechaInput) {
-        const today = new Date().toISOString().split('T')[0];
-        fechaInput.max = today;
-        fechaInput.min = '2000-01-01';
+    try {
+        const fecha = new Date(fechaMonta);
+        fecha.setDate(fecha.getDate() + 283); // Gestación bovina: ~283 días
+        
+        const fechaParto = fecha.toISOString().split('T')[0];
+        
+        // Actualizar UI
+        const fechaPartoElement = document.getElementById('fecha-parto-estimado');
+        const diasGestacionElement = document.getElementById('dias-gestacion');
+        
+        if (fechaPartoElement) {
+            fechaPartoElement.textContent = fechaParto;
+        }
+        
+        if (diasGestacionElement) {
+            const hoy = new Date();
+            const fechaMontaObj = new Date(fechaMonta);
+            const dias = Math.floor((hoy - fechaMontaObj) / (1000 * 60 * 60 * 24));
+            diasGestacionElement.textContent = dias > 0 ? dias : 0;
+        }
+        
+        // Configurar evento para recalcular cuando cambie la fecha
+        const fechaInput = document.getElementById('p_fecha');
+        if (fechaInput) {
+            fechaInput.addEventListener('change', function() {
+                calcularFechaPartoPrenada(this.value);
+            });
+        }
+        
+    } catch (error) {
+        console.error("Error calculando fecha de parto:", error);
+    }
+}
+
+// Cargar toros para prenada (CORREGIDA)
+async function cargarTorosParaPrenada() {
+    try {
+        const { data: toros, error } = await supabaseClient
+            .from('toros')
+            .select('id, nombre, raza')
+            .order('nombre');
+        
+        if (error) throw error;
+        
+        const selectToro = document.getElementById('p_toro');
+        if (selectToro) {
+            selectToro.innerHTML = '<option value="">Seleccionar toro (opcional)</option>';
+            
+            if (toros && toros.length > 0) {
+                toros.forEach(toro => {
+                    const option = document.createElement('option');
+                    option.value = toro.id;
+                    option.textContent = `#${toro.id} - ${toro.nombre || 'Sin nombre'} (${toro.raza || 'Sin raza'})`;
+                    selectToro.appendChild(option);
+                });
+            } else {
+                selectToro.innerHTML = '<option value="">No hay toros registrados</option>';
+            }
+        }
+    } catch (error) {
+        console.error('Error cargando toros:', error);
+    }
+}
+
+// Validar formulario de prenada (CORREGIDA)
+function validarFormularioPrenada() {
+    const vacaId = document.getElementById('p_vaca').value;
+    const fechaPrenada = document.getElementById('p_fecha').value;
+    const toroId = document.getElementById('p_toro').value;
+    const observaciones = document.getElementById('p_obs').value;
+    
+    const errores = [];
+    
+    // Validar vaca
+    if (!vacaId) {
+        errores.push('Debe seleccionar una vaca');
+        document.getElementById('p_vaca').classList.add('error');
+    } else {
+        document.getElementById('p_vaca').classList.remove('error');
     }
     
-    // Configurar validación en tiempo real
-    configurarValidacionTiempoReal();
-    
-    // Cargar animales automáticamente si estamos en la pestaña de consulta
-    if (document.getElementById('tab-consulta').classList.contains('active')) {
-        cargarAnimales();
+    // Validar fecha
+    if (!fechaPrenada) {
+        errores.push('La fecha de monta/inseminación es obligatoria');
+        document.getElementById('p_fecha').classList.add('error');
+    } else {
+        document.getElementById('p_fecha').classList.remove('error');
+        
+        // Validar que la fecha no sea futura
+        const fecha = new Date(fechaPrenada);
+        const hoy = new Date();
+        hoy.setHours(0, 0, 0, 0); // Normalizar a inicio del día
+        
+        if (fecha > hoy) {
+            errores.push('La fecha de monta no puede ser futura');
+            document.getElementById('p_fecha').classList.add('error');
+        }
+        
+        // Validar que la fecha no sea muy antigua
+        const fechaMinima = new Date('2000-01-01');
+        if (fecha < fechaMinima) {
+            errores.push('La fecha de monta no puede ser anterior al año 2000');
+            document.getElementById('p_fecha').classList.add('error');
+        }
     }
+    
+    // Validar toro (opcional, pero si se ingresa debe ser número válido)
+    if (toroId && (isNaN(toroId) || parseInt(toroId) <= 0)) {
+        errores.push('El ID del toro debe ser un número válido mayor que 0');
+        document.getElementById('p_toro').classList.add('error');
+    } else {
+        document.getElementById('p_toro').classList.remove('error');
+    }
+    
+    if (errores.length > 0) {
+        mostrarAdvertencia(
+            'Validación de Prenada',
+            'Por favor corrige los siguientes errores:',
+            errores.join('\n')
+        );
+        return false;
+    }
+    
+    return {
+        vaca_id: parseInt(vacaId),
+        fecha_prenada: fechaPrenada,
+        toro_padre: toroId ? parseInt(toroId) : null,
+        observaciones: observaciones.trim() || null,
+        estado: 'Prenada'
+    };
+}
+
+// Registrar nueva prenada (FUNCIÓN PRINCIPAL CORREGIDA)
+async function registrarPrenada() {
+    console.log("Iniciando registro de prenada...");
+    
+    // Validar formulario
+    const datos = validarFormularioPrenada();
+    if (!datos) {
+        console.log("Validación fallida");
+        return;
+    }
+    
+    console.log("Datos validados:", datos);
+    
+    try {
+        mostrarLoading('Verificando y registrando prenada...');
+        
+        // Verificar si la vaca ya está prenada (estado activo)
+        const { data: prenadaExistente, error: errorExistente } = await supabaseClient
+            .from('prenadas')
+            .select('id, estado')
+            .eq('vaca_id', datos.vaca_id)
+            .in('estado', ['Prenada', 'En proceso'])
+            .single();
+        
+        if (prenadaExistente && !errorExistente) {
+            ocultarLoading();
+            mostrarAdvertencia(
+                'Vaca ya preñada',
+                'Esta vaca ya tiene un registro de preñez activo',
+                `La vaca #${datos.vaca_id} ya está registrada como preñada. No se puede registrar otra preñez hasta que finalice la actual.`,
+                () => {
+                    // Opcional: Redirigir a ver detalles de la prenada existente
+                    // verDetallesPrenada(prenadaExistente.id);
+                }
+            );
+            return;
+        }
+        
+        // Calcular fecha estimada de parto (282 días = ~9 meses y 12 días)
+        const fechaPrenada = new Date(datos.fecha_prenada);
+        const fechaPartoEstimada = new Date(fechaPrenada);
+        fechaPartoEstimada.setDate(fechaPrenada.getDate() + 282);
+        
+        datos.fecha_parto_estimada = fechaPartoEstimada.toISOString().split('T')[0];
+        datos.created_at = new Date().toISOString();
+        
+        console.log("Datos a insertar:", datos);
+        
+        // Insertar en la base de datos
+        const { data, error } = await supabaseClient
+            .from('prenadas')
+            .insert([datos])
+            .select()
+            .single();
+        
+        if (error) {
+            console.error("Error de Supabase:", error);
+            throw new Error(`Error al insertar en la base de datos: ${error.message}`);
+        }
+        
+        console.log("Prenada registrada exitosamente:", data);
+        ocultarLoading();
+        
+        // Mostrar confirmación
+        const fechaPartoFormateada = formatearFecha(datos.fecha_parto_estimada);
+        mostrarConfirmacion(`¡Prenada registrada exitosamente! Parto estimado: ${fechaPartoFormateada}`);
+        
+        // Cerrar modal y limpiar formulario
+        cerrarModalPrenada();
+        
+        // Actualizar lista si estamos en la pestaña de prenadas
+        if (document.getElementById('tab-content-prenadas')?.classList.contains('active')) {
+            await cargarPrenadas();
+        }
+        
+        // Actualizar estadísticas rápidas
+        await cargarAnimales();
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error registrando prenada:', error);
+        
+        // Mensajes de error específicos
+        let mensajeError = 'No se pudo registrar la prenada';
+        let detallesError = error.message;
+        
+        if (error.message.includes('violates foreign key constraint')) {
+            mensajeError = 'Error de referencia';
+            detallesError = 'La vaca o toro seleccionado no existe en la base de datos';
+        } else if (error.message.includes('duplicate key')) {
+            mensajeError = 'Registro duplicado';
+            detallesError = 'Ya existe una prenada registrada con estos datos';
+        }
+        
+        mostrarError(
+            mensajeError,
+            detallesError
+        );
+    }
+}
+
+// Función auxiliar para formatear fechas
+function formatearFecha(fechaISO) {
+    if (!fechaISO) return 'N/A';
+    try {
+        const fecha = new Date(fechaISO);
+        return fecha.toLocaleDateString('es-ES', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+        });
+    } catch (error) {
+        return 'Fecha inválida';
+    }
+}
+
+// Cargar prenadas (VERSIÓN SIMPLIFICADA Y FUNCIONAL)
+async function cargarPrenadas() {
+    const tbody = document.getElementById('prenadas-table-body');
+    
+    if (!tbody) {
+        console.error("Elemento prenadas-table-body no encontrado");
+        return;
+    }
+    
+    mostrarLoading('Cargando prenadas...');
+    
+    try {
+        // Obtener todas las prenadas activas
+        const { data: prenadas, error } = await supabaseClient
+            .from('prenadas')
+            .select(`
+                *,
+                vacas (id, nombre, raza, edad_aproximada),
+                toros (id, nombre, raza)
+            `)
+            .in('estado', ['Prenada', 'En proceso'])
+            .order('fecha_parto_estimada', { ascending: true });
+        
+        if (error) throw error;
+        
+        // Actualizar estadísticas
+        actualizarEstadisticasPrenadas(prenadas);
+        
+        // Limpiar tabla
+        tbody.innerHTML = '';
+        
+        if (!prenadas || prenadas.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="no-data">No hay vacas preñadas registradas</td></tr>';
+            ocultarLoading();
+            return;
+        }
+        
+        // Llenar tabla
+        const hoy = new Date();
+        
+        prenadas.forEach(prenada => {
+            const tr = document.createElement('tr');
+            
+            // Calcular días hasta el parto
+            let diasRestantes = 0;
+            let estadoTexto = '';
+            let claseFila = '';
+            
+            if (prenada.fecha_parto_estimada) {
+                const fechaParto = new Date(prenada.fecha_parto_estimada);
+                diasRestantes = Math.ceil((fechaParto - hoy) / (1000 * 60 * 60 * 24));
+                
+                if (diasRestantes < 0) {
+                    claseFila = 'retrasada';
+                    estadoTexto = `Retrasada ${Math.abs(diasRestantes)} días`;
+                } else if (diasRestantes <= 7) {
+                    claseFila = 'proximo';
+                    estadoTexto = `Muy pronto (${diasRestantes} días)`;
+                } else if (diasRestantes <= 14) {
+                    claseFila = 'proximo';
+                    estadoTexto = `Próximo (${diasRestantes} días)`;
+                } else {
+                    estadoTexto = `Faltan ${diasRestantes} días`;
+                }
+            }
+            
+            tr.className = claseFila;
+            
+            // Información de la vaca
+            const vacaInfo = prenada.vacas || {};
+            const toroInfo = prenada.toros || {};
+            
+            tr.innerHTML = `
+                <td>#${vacaInfo.id || prenada.vaca_id}</td>
+                <td>${vacaInfo.nombre || 'Sin nombre'}</td>
+                <td>${vacaInfo.raza || 'N/A'}</td>
+                <td>${vacaInfo.edad_aproximada || 'N/A'} años</td>
+                <td>${formatearFecha(prenada.fecha_prenada)}</td>
+                <td>
+                    ${formatearFecha(prenada.fecha_parto_estimada)}
+                    ${estadoTexto ? `<br><small>(${estadoTexto})</small>` : ''}
+                </td>
+                <td>${toroInfo.id ? `#${toroInfo.id} - ${toroInfo.nombre || 'Sin nombre'}` : 'N/A'}</td>
+                <td>
+                    <div class="animal-actions">
+                        <button class="btn-action btn-view" onclick="verDetallesPrenada(${prenada.id})" title="Ver detalles">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn-action btn-edit" onclick="marcarParto(${prenada.id})" title="Registrar parto">
+                            <i class="fas fa-baby"></i>
+                        </button>
+                        <button class="btn-action btn-delete" onclick="cancelarPrenada(${prenada.id}, '${vacaInfo.nombre || 'Vaca'}')" title="Cancelar prenada">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </td>
+            `;
+            
+            tbody.appendChild(tr);
+        });
+        
+        // Actualizar contador
+        document.getElementById('prenadas-count').textContent = `${prenadas.length} vaca(s) preñada(s)`;
+        
+        ocultarLoading();
+        
+    } catch (error) {
+        console.error("Error cargando prenadas:", error);
+        tbody.innerHTML = '<tr><td colspan="8" class="no-data error">Error al cargar las prenadas</td></tr>';
+        ocultarLoading();
+    }
+}
+
+// Actualizar estadísticas de prenadas
+function actualizarEstadisticasPrenadas(prenadas) {
+    if (!prenadas || prenadas.length === 0) {
+        document.getElementById('stat-prenadas-total').textContent = '0';
+        document.getElementById('stat-prenadas-cercanas').textContent = '0';
+        document.getElementById('stat-prenadas-retrasadas').textContent = '0';
+        return;
+    }
+    
+    const hoy = new Date();
+    let cercanas = 0;
+    let retrasadas = 0;
+    
+    prenadas.forEach(prenada => {
+        if (prenada.fecha_parto_estimada) {
+            const fechaParto = new Date(prenada.fecha_parto_estimada);
+            const diasRestantes = Math.ceil((fechaParto - hoy) / (1000 * 60 * 60 * 24));
+            
+            if (diasRestantes < 0) {
+                retrasadas++;
+            } else if (diasRestantes <= 14) {
+                cercanas++;
+            }
+        }
+    });
+    
+    document.getElementById('stat-prenadas-total').textContent = prenadas.length;
+    document.getElementById('stat-prenadas-cercanas').textContent = cercanas;
+    document.getElementById('stat-prenadas-retrasadas').textContent = retrasadas;
+}
+
+// Función para cerrar modal de prenada (CORREGIDA)
+function cerrarModalPrenada() {
+    const modal = document.getElementById('modal-prenada');
+    if (modal) {
+        modal.classList.add('hidden');
+        
+        // Limpiar formulario
+        const form = document.getElementById('form-prenada');
+        if (form) {
+            form.reset();
+        }
+        
+        // Resetear información calculada
+        const fechaPartoElement = document.getElementById('fecha-parto-estimado');
+        const diasGestacionElement = document.getElementById('dias-gestacion');
+        
+        if (fechaPartoElement) fechaPartoElement.textContent = '--/--/----';
+        if (diasGestacionElement) diasGestacionElement.textContent = '0';
+    }
+}
+
+// ================= FUNCIONES FALTANTES DEL SISTEMA DE PREÑEZ =================
+
+// Función para sugerir IDs consecutivos
+async function sugerirIdsConsecutivos(prenadaId) {
+    try {
+        // Obtener el último ID de ternero registrado
+        const { data: ultimoTernero } = await supabaseClient
+            .from('animales')
+            .select('id')
+            .eq('tipo', 'Ternero')
+            .order('id', { ascending: false })
+            .limit(1)
+            .single();
+        
+        let siguienteId = ultimoTernero ? ultimoTernero.id + 1 : 4001;
+        
+        // Sugerir IDs consecutivos para cada ternero
+        const totalTerneros = parseInt(document.getElementById('parto-total').value) || 1;
+        for (let i = 1; i <= totalTerneros; i++) {
+            const idInput = document.getElementById(`te_id_${i}`);
+            idInput.value = siguienteId;
+            siguienteId++;
+            
+            // Validar automáticamente
+            setTimeout(() => validarIdTernero(i), 100);
+        }
+        
+    } catch (error) {
+        console.error('Error obteniendo último ID:', error);
+    }
+}
+
+
+// Función para marcar parto (completamente implementada)
+async function marcarParto(prenadaId) {
+    console.log("Marcando parto para prenada ID:", prenadaId);
+    
+    try {
+        // Obtener información de la prenada
+        const { data: prenada, error: errorPrenada } = await supabaseClient
+            .from('prenadas')
+            .select(`
+                *,
+                vacas (id, nombre, raza),
+                toros (id, nombre)
+            `)
+            .eq('id', prenadaId)
+            .single();
+        
+        if (errorPrenada) throw errorPrenada;
+        if (!prenada) throw new Error('Prenada no encontrada');
+        
+        // Guardar ID en input oculto
+        document.getElementById('parto-prenada-id').value = prenadaId;
+        
+        // Mostrar información en el modal
+        const vacaNombre = prenada.vacas?.nombre || `Vaca #${prenada.vaca_id}`;
+        document.getElementById('parto-vaca-nombre').textContent = vacaNombre;
+        document.getElementById('parto-fecha-estimada').textContent = 
+            formatearFecha(prenada.fecha_parto_estimada) || 'No estimada';
+        
+        // Configurar fecha actual por defecto
+        const hoy = new Date().toISOString().split('T')[0];
+        document.getElementById('parto-fecha').value = hoy;
+        document.getElementById('parto-fecha').max = hoy;
+        document.getElementById('parto-fecha').min = prenada.fecha_prenada;
+        
+        // Resetear valores
+        document.getElementById('parto-total').value = 1;
+        document.getElementById('parto-muertos').value = 0;
+        document.getElementById('parto-obs').value = '';
+        
+        // Actualizar formularios de terneros
+        actualizarFormulariosTerneros();
+        
+        // Sugerir IDs consecutivos
+        sugerirIdsConsecutivos(prenadaId);
+        
+        // Mostrar modal
+        document.getElementById('registro-parto-modal').classList.remove('hidden');
+        
+    } catch (error) {
+        console.error("Error al preparar registro de parto:", error);
+        mostrarError('Error', 'No se pudo cargar la información de la prenada', error.message);
+    }
+}
+
+// Función para cerrar modal de parto
+function cerrarModalParto() {
+    document.getElementById('registro-parto-modal').classList.add('hidden');
+    document.getElementById('parto-prenada-id').value = '';
+    
+    // Limpiar formularios de terneros
+    const container = document.getElementById('terneros-container');
+    const formularios = container.querySelectorAll('.ternero-form');
+    formularios.forEach(form => form.remove());
+}
+
+// Función para pre-cargar datos de la vaca en los terneros
+function precargarDatosVaca(prenada) {
+    if (!prenada.vacas) return;
+    
+    const totalTerneros = parseInt(document.getElementById('parto-total').value) || 1;
+    const razaVaca = prenada.vacas.raza || 'Desconocida';
+    
+    for (let i = 1; i <= totalTerneros; i++) {
+        const razaInput = document.getElementById(`te_raza_${i}`);
+        if (razaInput && !razaInput.value) {
+            razaInput.value = razaVaca;
+        }
+    }
+}
+
+// Función para confirmar registro de parto (completamente implementada)
+async function confirmarRegistroParto() {
+    const prenadaId = document.getElementById('parto-prenada-id').value;
+    const fechaParto = document.getElementById('parto-fecha').value;
+    const ternerosMuertos = parseInt(document.getElementById('parto-muertos').value) || 0;
+    const observaciones = document.getElementById('parto-obs').value.trim();
+    const terneros = obtenerDatosTerneros();
+    const ternerosVivos = terneros.length;
+    
+    // Validaciones
+    if (!fechaParto) {
+        mostrarAdvertencia('Validación', 'La fecha del parto es obligatoria');
+        return;
+    }
+    
+    if (ternerosVivos === 0 && ternerosMuertos === 0) {
+        mostrarAdvertencia('Validación', 'Debe registrar al menos un ternero (vivo o muerto)');
+        return;
+    }
+    
+    // Validar que todos los IDs sean únicos
+    const ids = terneros.map(t => t.id);
+    const idsUnicos = new Set(ids);
+    if (ids.length !== idsUnicos.size) {
+        mostrarAdvertencia('Validación', 'Los IDs de los terneros deben ser únicos');
+        return;
+    }
+    
+    // Validar cada ID individualmente
+    let todosIdsValidos = true;
+    for (let i = 0; i < terneros.length; i++) {
+        const inputId = document.getElementById(`te_id_${i + 1}`);
+        if (inputId.classList.contains('ternero-id-invalid')) {
+            todosIdsValidos = false;
+            break;
+        }
+    }
+    
+    if (!todosIdsValidos) {
+        mostrarAdvertencia('Validación', 'Algunos IDs de terneros no son válidos. Por favor verifica.');
+        return;
+    }
+    
+    try {
+        mostrarLoading('Registrando parto y terneros...');
+        
+        // 1. Obtener información de la prenada
+        const { data: prenada, error: errorPrenada } = await supabaseClient
+            .from('prenadas')
+            .select('*, vacas(id, nombre, raza), toros(id, nombre)')
+            .eq('id', prenadaId)
+            .single();
+        
+        if (errorPrenada) throw errorPrenada;
+        
+        // 2. Actualizar estado de la prenada
+        const datosActualizacion = {
+            estado: 'Finalizada',
+            fecha_parto: fechaParto,
+            terneros_vivos: ternerosVivos,
+            terneros_muertos: ternerosMuertos,
+            observaciones_partos: observaciones || null,
+            created_at: new Date().toISOString()
+        };
+        
+        const { error: errorUpdate } = await supabaseClient
+            .from('prenadas')
+            .update(datosActualizacion)
+            .eq('id', prenadaId);
+        
+        if (errorUpdate) throw errorUpdate;
+        
+        // 3. Registrar cada ternero vivo
+        const ternerosRegistrados = [];
+        for (const ternero of terneros) {
+            try {
+                // Insertar en tabla general
+                const { error: errorAnimal } = await supabaseClient
+                    .from('animales')
+                    .insert([{ 
+                        id: ternero.id, 
+                        tipo: 'Ternero',
+                        created_at: new Date().toISOString()
+                    }]);
+                
+                if (errorAnimal) throw errorAnimal;
+                
+                // Insertar en tabla específica
+                const { error: errorTernero } = await supabaseClient
+                    .from('terneros')
+                    .insert([{
+                        id: ternero.id,
+                        raza: ternero.raza || prenada.vacas?.raza || 'Desconocida',
+                        nombre: ternero.nombre,
+                        genero: ternero.genero,
+                        fecha_nacimiento: fechaParto,
+                        padre: prenada.toro_padre || null,
+                        madre: prenada.vaca_id
+                    }]);
+                
+                if (errorTernero) throw errorTernero;
+                
+                ternerosRegistrados.push(ternero);
+                
+            } catch (error) {
+                console.error(`Error registrando ternero ${ternero.id}:`, error);
+                // Continuar con los demás terneros
+            }
+        }
+        
+        // 4. Actualizar número de partos de la vaca
+        if (prenada.vacas) {
+            const { data: vacaActual } = await supabaseClient
+                .from('vacas')
+                .select('total_partos')
+                .eq('id', prenada.vaca_id)
+                .single();
+            
+            const nuevosPartos = (vacaActual?.total_partos || 0) + 1;
+            
+            await supabaseClient
+                .from('vacas')
+                .update({ total_partos: nuevosPartos })
+                .eq('id', prenada.vaca_id);
+        }
+        
+        ocultarLoading();
+        cerrarModalParto();
+        
+        // Mostrar resumen detallado
+        let mensaje = `
+            Parto registrado exitosamente:
+            • Fecha: ${formatearFecha(fechaParto)}
+            • Terneros vivos: ${ternerosVivos}
+            • Terneros muertos: ${ternerosMuertos}
+        `;
+        
+        if (ternerosRegistrados.length > 0) {
+            mensaje += `\n\nTerneros registrados:`;
+            ternerosRegistrados.forEach(t => {
+                mensaje += `\n• #${t.id} - ${t.nombre} (${t.genero}, ${t.raza})`;
+            });
+        }
+        
+        if (observaciones) {
+            mensaje += `\n\nObservaciones: ${observaciones}`;
+        }
+        
+        mostrarConfirmacion(mensaje);
+        
+        // 5. Actualizar listas
+        await cargarPrenadas();
+        await cargarAnimales();
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error registrando parto:', error);
+        
+        // Manejar error de columnas faltantes
+        if (error.message.includes('fecha_parto')) {
+            mostrarError(
+                'Error de Base de Datos',
+                'Falta la columna fecha_parto',
+                'Por favor, agrega esta columna a la tabla prenadas en Supabase:\n\n' +
+                'ALTER TABLE prenadas ADD COLUMN fecha_parto DATE;'
+            );
+        } else {
+            mostrarError('Error al registrar parto', error.message);
+        }
+    }
+}
+// Función para cancelar prenada (completamente implementada)
+async function cancelarPrenada(prenadaId, nombreVaca) {
+    mostrarAdvertencia(
+        'Cancelar Prenada',
+        `¿Estás seguro de cancelar la prenada de "${nombreVaca}"?`,
+        'Esta acción marcará la prenada como cancelada. Solo debe usarse en casos de aborto o problemas de gestación.',
+        async () => {
+            try {
+                mostrarLoading('Cancelando prenada...');
+                
+                const { error } = await supabaseClient
+                    .from('prenadas')
+                    .update({
+                        estado: 'Cancelada',
+                        observaciones: 'Prenada cancelada por el usuario',
+                        created_at: new Date().toISOString()
+                    })
+                    .eq('id', prenadaId);
+                
+                if (error) throw error;
+                
+                ocultarLoading();
+                mostrarConfirmacion(`Prenada de "${nombreVaca}" cancelada correctamente`);
+                
+                // Actualizar lista
+                await cargarPrenadas();
+                
+            } catch (error) {
+                ocultarLoading();
+                console.error('Error cancelando prenada:', error);
+                mostrarError('Error al cancelar prenada', error.message);
+            }
+        }
+    );
+}
+
+// Función para ver detalles de prenada (mejorada)
+async function verDetallesPrenada(prenadaId) {
+    try {
+        mostrarLoading('Cargando detalles de la prenada...');
+        
+        const { data: prenada, error } = await supabaseClient
+            .from('prenadas')
+            .select(`
+                *,
+                vacas (id, nombre, raza, edad_aproximada, total_partos),
+                toros (id, nombre, raza)
+            `)
+            .eq('id', prenadaId)
+            .single();
+        
+        if (error) throw error;
+        
+        const hoy = new Date();
+        const fechaPrenada = new Date(prenada.fecha_prenada);
+        const fechaPartoEstimada = prenada.fecha_parto_estimada ? new Date(prenada.fecha_parto_estimada) : null;
+        
+        // Calcular días
+        const diasDesdePrenada = Math.floor((hoy - fechaPrenada) / (1000 * 60 * 60 * 24));
+        let diasHastaParto = null;
+        let estado = prenada.estado;
+        
+        if (fechaPartoEstimada) {
+            diasHastaParto = Math.ceil((fechaPartoEstimada - hoy) / (1000 * 60 * 60 * 24));
+            
+            if (prenada.estado === 'Prenada') {
+                if (diasHastaParto < 0) {
+                    estado = 'Retrasada';
+                } else if (diasHastaParto <= 7) {
+                    estado = 'Parto muy próximo';
+                } else if (diasHastaParto <= 14) {
+                    estado = 'Parto próximo';
+                }
+            }
+        }
+        
+        // Crear HTML de detalles
+        const detallesHTML = `
+            <div class="prenada-details">
+                <div class="detail-section">
+                    <h5><i class="fas fa-info-circle"></i> Información General</h5>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <span class="detail-label">Estado:</span>
+                            <span class="detail-value ${estado === 'Finalizada' ? 'estado-normal' : estado === 'Cancelada' ? 'estado-retrasado' : 'estado-cercano'}">
+                                ${estado}
+                            </span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Fecha de Monta:</span>
+                            <span class="detail-value">${formatearFecha(prenada.fecha_prenada)}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Días de Gestación:</span>
+                            <span class="detail-value">${diasDesdePrenada} días</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="detail-section">
+                    <h5><i class="fas fa-cow"></i> Información de la Vaca</h5>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <span class="detail-label">ID:</span>
+                            <span class="detail-value">#${prenada.vacas?.id || prenada.vaca_id}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Nombre:</span>
+                            <span class="detail-value">${prenada.vacas?.nombre || 'Sin nombre'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Raza:</span>
+                            <span class="detail-value">${prenada.vacas?.raza || 'N/A'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Partos previos:</span>
+                            <span class="detail-value">${prenada.vacas?.total_partos || 0}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                ${prenada.toros ? `
+                <div class="detail-section">
+                    <h5><i class="fas fa-horse-head"></i> Información del Toro</h5>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <span class="detail-label">ID:</span>
+                            <span class="detail-value">#${prenada.toros.id}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Nombre:</span>
+                            <span class="detail-value">${prenada.toros.nombre || 'Sin nombre'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Raza:</span>
+                            <span class="detail-value">${prenada.toros.raza || 'N/A'}</span>
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
+                
+                ${fechaPartoEstimada ? `
+                <div class="detail-section">
+                    <h5><i class="fas fa-calendar-check"></i> Información del Parto</h5>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <span class="detail-label">Parto Estimado:</span>
+                            <span class="detail-value">${formatearFecha(prenada.fecha_parto_estimada)}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Días restantes:</span>
+                            <span class="detail-value ${diasHastaParto < 0 ? 'estado-retrasado' : diasHastaParto <= 7 ? 'estado-cercano' : ''}">
+                                ${diasHastaParto < 0 ? `Retraso: ${Math.abs(diasHastaParto)} días` : `${diasHastaParto} días`}
+                            </span>
+                        </div>
+                        ${prenada.fecha_parto ? `
+                        <div class="detail-item">
+                            <span class="detail-label">Parto Real:</span>
+                            <span class="detail-value">${formatearFecha(prenada.fecha_parto)}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Terneros vivos:</span>
+                            <span class="detail-value">${prenada.terneros_vivos || 0}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Terneros muertos:</span>
+                            <span class="detail-value">${prenada.terneros_muertos || 0}</span>
+                        </div>
+                        ` : ''}
+                    </div>
+                </div>
+                ` : ''}
+                
+                ${prenada.observaciones ? `
+                <div class="detail-section">
+                    <h5><i class="fas fa-sticky-note"></i> Observaciones</h5>
+                    <p style="margin: 0; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+                        ${prenada.observaciones}
+                    </p>
+                </div>
+                ` : ''}
+                
+                ${prenada.observaciones_partos ? `
+                <div class="detail-section">
+                    <h5><i class="fas fa-baby"></i> Observaciones del Parto</h5>
+                    <p style="margin: 0; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+                        ${prenada.observaciones_partos}
+                    </p>
+                </div>
+                ` : ''}
+            </div>
+        `;
+        
+        document.getElementById('prenada-detail-body').innerHTML = detallesHTML;
+        document.getElementById('prenada-detail-modal').classList.remove('hidden');
+        
+        ocultarLoading();
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error cargando detalles de prenada:', error);
+        mostrarError('Error', 'No se pudieron cargar los detalles de la prenada', error.message);
+    }
+}
+
+// Función para cargar historial de prenadas
+async function cargarHistorialPrenadas() {
+    try {
+        mostrarLoading('Cargando historial de prenadas...');
+        
+        const { data: prenadas, error } = await supabaseClient
+            .from('prenadas')
+            .select(`
+                *,
+                vacas (id, nombre, raza),
+                toros (id, nombre)
+            `)
+            .order('created_at', { ascending: false })
+            .limit(50);
+        
+        if (error) throw error;
+        
+        // Aquí podrías implementar la visualización del historial
+        // Por ejemplo, en una nueva pestaña o modal
+        
+        ocultarLoading();
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error cargando historial:', error);
+    }
+}
+
+// Función para generar reporte de prenadas
+async function generarReportePrenadas() {
+    try {
+        mostrarLoading('Generando reporte...');
+        
+        const { data: prenadas, error } = await supabaseClient
+            .from('prenadas')
+            .select(`
+                *,
+                vacas (id, nombre, raza),
+                toros (id, nombre, raza)
+            `)
+            .order('fecha_prenada', { ascending: false });
+        
+        if (error) throw error;
+        
+        // Crear CSV
+        const headers = [
+            'ID Prenada', 'ID Vaca', 'Nombre Vaca', 'Raza Vaca', 
+            'ID Toro', 'Nombre Toro', 'Fecha Monta', 'Parto Estimado', 
+            'Parto Real', 'Estado', 'Terneros Vivos', 'Terneros Muertos',
+            'Observaciones', 'Fecha Registro'
+        ];
+        
+        const csvData = prenadas.map(p => [
+            p.id,
+            p.vaca_id,
+            p.vacas?.nombre || '',
+            p.vacas?.raza || '',
+            p.toro_padre || '',
+            p.toros?.nombre || '',
+            p.fecha_prenada,
+            p.fecha_parto_estimada || '',
+            p.fecha_parto || '',
+            p.estado,
+            p.terneros_vivos || 0,
+            p.terneros_muertos || 0,
+            p.observaciones ? `"${p.observaciones.replace(/"/g, '""')}"` : '',
+            p.created_at ? new Date(p.created_at).toLocaleDateString() : ''
+        ]);
+        
+        const csvContent = [headers.join(','), ...csvData.map(row => row.join(','))].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        
+        link.setAttribute('href', url);
+        link.setAttribute('download', `reporte_prenadas_${new Date().toISOString().split('T')[0]}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        ocultarLoading();
+        mostrarConfirmacion('Reporte de prenadas generado exitosamente');
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error generando reporte:', error);
+        mostrarError('Error', 'No se pudo generar el reporte', error.message);
+    }
+}
+
+// Función auxiliar para formatear fechas (ya existe, pero la mejoramos)
+function formatearFecha(fechaISO) {
+    if (!fechaISO) return 'N/A';
+    try {
+        const fecha = new Date(fechaISO);
+        // Ajustar por zona horaria
+        const fechaAjustada = new Date(fecha.getTime() + fecha.getTimezoneOffset() * 60000);
+        return fechaAjustada.toLocaleDateString('es-ES', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+        });
+    } catch (error) {
+        console.warn('Error formateando fecha:', fechaISO, error);
+        return 'Fecha inválida';
+    }
+}
+
+// Función para cerrar todos los modales
+function cerrarTodosLosModales() {
+    const modales = [
+        'animal-detail-modal',
+        'modal-prenada',
+        'prenada-detail-modal',
+        'registro-parto-modal',
+        'error-message',
+        'warning-message',
+        'confirmation-message'
+    ];
+    
+    modales.forEach(modalId => {
+        const modal = document.getElementById(modalId);
+        if (modal) modal.classList.add('hidden');
+    });
+}
+
+// ================= FUNCIONES PARA REGISTRO MANUAL DE TERNEROS =================
+
+// Función para actualizar formularios de terneros según cantidad
+function actualizarFormulariosTerneros() {
+    const totalTerneros = parseInt(document.getElementById('parto-total').value) || 1;
+    const container = document.getElementById('terneros-container');
+    
+    // Mantener el título
+    const titulo = container.querySelector('h4');
+    const descripcion = container.querySelector('p');
+    
+    // Limpiar formularios existentes (excepto título)
+    const formulariosExistentes = container.querySelectorAll('.ternero-form');
+    formulariosExistentes.forEach(form => form.remove());
+    
+    // Crear nuevos formularios
+    for (let i = 1; i <= totalTerneros; i++) {
+        const terneroForm = document.createElement('div');
+        terneroForm.className = 'ternero-form';
+        terneroForm.id = `ternero-${i}`;
+        
+        terneroForm.innerHTML = `
+            <div class="ternero-header">
+                <h5><i class="fas fa-horse"></i> Ternero ${i}</h5>
+                <span class="ternero-badge">#${i}</span>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="te_id_${i}"><i class="fas fa-tag"></i> Número de Arete (ID)</label>
+                    <input type="number" id="te_id_${i}" placeholder="Ej: ${4000 + i}" required oninput="validarIdTernero(${i})">
+                    <small class="form-hint">Identificador único del ternero</small>
+                    <div id="id-status-${i}" class="id-validation-status"></div>
+                </div>
+                <div class="form-group">
+                    <label for="te_nombre_${i}"><i class="fas fa-signature"></i> Nombre</label>
+                    <input type="text" id="te_nombre_${i}" placeholder="Ej: Manchitas, Torito">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="te_genero_${i}"><i class="fas fa-venus-mars"></i> Género</label>
+                    <select id="te_genero_${i}">
+                        <option value="Macho">Macho</option>
+                        <option value="Hembra">Hembra</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="te_raza_${i}"><i class="fas fa-dna"></i> Raza</label>
+                    <input type="text" id="te_raza_${i}" placeholder="Ej: Holstein, Angus, etc.">
+                </div>
+            </div>
+        `;
+        
+        container.appendChild(terneroForm);
+    }
+}
+
+// Validar ID del ternero en tiempo real
+async function validarIdTernero(numero) {
+    const idInput = document.getElementById(`te_id_${numero}`);
+    const idValue = idInput.value.trim();
+    const statusDiv = document.getElementById(`id-status-${numero}`);
+    
+    // Limpiar estado anterior
+    idInput.classList.remove('ternero-id-valid', 'ternero-id-invalid', 'ternero-id-checking');
+    statusDiv.className = 'id-validation-status';
+    statusDiv.textContent = '';
+    
+    if (!idValue) return;
+    
+    if (isNaN(idValue) || parseInt(idValue) <= 0) {
+        idInput.classList.add('ternero-id-invalid');
+        statusDiv.className = 'id-validation-status taken show';
+        statusDiv.innerHTML = '<i class="fas fa-times-circle"></i> ID debe ser número positivo';
+        return;
+    }
+    
+    // Mostrar estado de verificación
+    idInput.classList.add('ternero-id-checking');
+    statusDiv.className = 'id-validation-status checking show';
+    statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verificando...';
+    
+    try {
+        const resultado = await validarIdUnico(idValue, 'Ternero');
+        
+        if (resultado.disponible) {
+            idInput.classList.remove('ternero-id-checking');
+            idInput.classList.add('ternero-id-valid');
+            statusDiv.className = 'id-validation-status available show';
+            statusDiv.innerHTML = `<i class="fas fa-check-circle"></i> ${resultado.mensaje}`;
+        } else {
+            idInput.classList.remove('ternero-id-checking');
+            idInput.classList.add('ternero-id-invalid');
+            statusDiv.className = 'id-validation-status taken show';
+            statusDiv.innerHTML = `<i class="fas fa-times-circle"></i> ${resultado.mensaje}`;
+        }
+    } catch (error) {
+        idInput.classList.remove('ternero-id-checking');
+        statusDiv.className = 'id-validation-status';
+        console.error('Error validando ID:', error);
+    }
+}
+
+// Función para obtener datos de todos los terneros
+function obtenerDatosTerneros() {
+    const totalTerneros = parseInt(document.getElementById('parto-total').value) || 1;
+    const terneros = [];
+    
+    for (let i = 1; i <= totalTerneros; i++) {
+        const id = document.getElementById(`te_id_${i}`).value;
+        const nombre = document.getElementById(`te_nombre_${i}`).value;
+        const genero = document.getElementById(`te_genero_${i}`).value;
+        const raza = document.getElementById(`te_raza_${i}`).value;
+        
+        if (id) { // Solo agregar si tiene ID
+            terneros.push({
+                id: parseInt(id),
+                nombre: nombre || `Ternero ${i}`,
+                genero: genero,
+                raza: raza || 'Desconocida'
+            });
+        }
+    }
+    
+    return terneros;
+}
+
+// ================= SISTEMA DE REINTENTOS INTELIGENTES =================
+async function ejecutarConReintentos(operacion, maxReintentos = 3, delayInicial = 1000) {
+    let ultimoError;
+    
+    for (let intento = 1; intento <= maxReintentos; intento++) {
+        try {
+            return await operacion();
+        } catch (error) {
+            ultimoError = error;
+            
+            // No reintentar para errores de validación del cliente
+            if (error.message.includes('validación') || 
+                error.message.includes('ID') || 
+                error.message.includes('formato')) {
+                throw error;
+            }
+            
+            // Calcular delay exponencial con jitter
+            const delay = delayInicial * Math.pow(2, intento - 1);
+            const jitter = delay * 0.1 * Math.random();
+            const delayTotal = delay + jitter;
+            
+            if (intento < maxReintentos) {
+                console.warn(`Reintento ${intento}/${maxReintentos} después de ${delayTotal}ms:`, error.message);
+                mostrarToast('warning', 'Reintentando...', 
+                    `Operación falló. Reintento ${intento} de ${maxReintentos}`);
+                
+                await new Promise(resolve => setTimeout(resolve, delayTotal));
+            }
+        }
+    }
+    
+    throw ultimoError;
+}
+
+// ================= VALIDACIONES DE INTEGRIDAD =================
+async function verificarIntegridadDatos() {
+    const problemas = [];
+    
+    try {
+        // Verificar que todos los animales tengan su registro específico
+        const { data: animales, error } = await supabaseClient
+            .from('animales')
+            .select('id, tipo');
+        
+        if (error) throw error;
+        
+        for (const animal of animales) {
+            let registroEspecifico = null;
+            
+            switch (animal.tipo) {
+                case 'Vaca':
+                    const { data: vaca } = await supabaseClient
+                        .from('vacas')
+                        .select('id')
+                        .eq('id', animal.id)
+                        .single();
+                    registroEspecifico = vaca;
+                    break;
+                    
+                case 'Toro':
+                    const { data: toro } = await supabaseClient
+                        .from('toros')
+                        .select('id')
+                        .eq('id', animal.id)
+                        .single();
+                    registroEspecifico = toro;
+                    break;
+                    
+                case 'Ternero':
+                    const { data: ternero } = await supabaseClient
+                        .from('terneros')
+                        .select('id')
+                        .eq('id', animal.id)
+                        .single();
+                    registroEspecifico = ternero;
+                    break;
+            }
+            
+            if (!registroEspecifico) {
+                problemas.push(`Animal ${animal.id} (${animal.tipo}) no tiene registro específico`);
+            }
+        }
+        
+        // Verificar relaciones de padres/madres
+        const { data: terneros } = await supabaseClient
+            .from('terneros')
+            .select('id, padre, madre');
+        
+        for (const ternero of terneros || []) {
+            if (ternero.padre) {
+                const { data: padre } = await supabaseClient
+                    .from('animales')
+                    .select('tipo')
+                    .eq('id', ternero.padre)
+                    .single();
+                
+                if (!padre || padre.tipo !== 'Toro') {
+                    problemas.push(`Ternero ${ternero.id}: padre ${ternero.padre} no existe o no es toro`);
+                }
+            }
+            
+            if (ternero.madre) {
+                const { data: madre } = await supabaseClient
+                    .from('animales')
+                    .select('tipo')
+                    .eq('id', ternero.madre)
+                    .single();
+                
+                if (!madre || madre.tipo !== 'Vaca') {
+                    problemas.push(`Ternero ${ternero.id}: madre ${ternero.madre} no existe o no es vaca`);
+                }
+            }
+        }
+        
+    } catch (error) {
+        console.error('Error verificando integridad:', error);
+        problemas.push(`Error verificando integridad: ${error.message}`);
+    }
+    
+    return problemas;
+}
+
+// Función para ejecutar verificaciones periódicas
+function iniciarVerificacionesPeriodicas() {
+    // Verificar cada 5 minutos
+    setInterval(async () => {
+        const problemas = await verificarIntegridadDatos();
+        if (problemas.length > 0) {
+            console.warn('Problemas de integridad encontrados:', problemas);
+            
+            // Solo mostrar advertencia si hay problemas graves
+            if (problemas.some(p => p.includes('no existe'))) {
+                mostrarToast('warning', 'Problemas de integridad', 
+                    `Se encontraron ${problemas.length} problemas en los datos`);
+            }
+        }
+    }, 5 * 60 * 1000); // 5 minutos
+}
+
+// ================= SISTEMA DE HISTORIAL DE PARTOS =================
+
+// Variables para el historial
+let historialPartos = [];
+let historialFiltrado = [];
+let paginaHistorialActual = 1;
+const itemsPorPaginaHistorial = 10;
+
+// Cargar historial de partos
+async function cargarHistorialPartos() {
+    console.log("Cargando historial de partos...");
+    mostrarLoading('Cargando historial de partos...');
+    
+    try {
+        // Obtener todas las prenadas finalizadas o canceladas
+        const { data: prenadas, error } = await supabaseClient
+            .from('prenadas')
+            .select(`
+                *,
+                vacas (id, nombre, raza, edad_aproximada, total_partos),
+                toros (id, nombre, raza)
+            `)
+            .in('estado', ['Finalizada', 'Cancelada'])
+            .order('fecha_parto', { ascending: false });
+        
+        if (error) throw error;
+        
+        console.log(`Se encontraron ${prenadas?.length || 0} partos en el historial`);
+        
+        // Procesar datos para el historial
+        historialPartos = prenadas.map(prenada => {
+            // Calcular duración de gestación en días
+            let duracionGestacion = null;
+            if (prenada.fecha_prenada && prenada.fecha_parto) {
+                const fechaInicio = new Date(prenada.fecha_prenada);
+                const fechaFin = new Date(prenada.fecha_parto);
+                duracionGestacion = Math.round((fechaFin - fechaInicio) / (1000 * 60 * 60 * 24));
+            }
+            
+            // Formatear fechas
+            const fechaPartoFormateada = prenada.fecha_parto 
+                ? formatearFecha(prenada.fecha_parto)
+                : 'No registrada';
+            
+            const fechaPrenadaFormateada = prenada.fecha_prenada 
+                ? formatearFecha(prenada.fecha_prenada)
+                : 'No registrada';
+            
+            return {
+                ...prenada,
+                fecha_partoo_formateada: fechaPartoFormateada,
+                fecha_prenada_formateada: fechaPrenadaFormateada,
+                duracion_gestacion: duracionGestacion,
+                total_terneros: (prenada.terneros_vivos || 0) + (prenada.terneros_muertos || 0)
+            };
+        });
+        
+        historialFiltrado = [...historialPartos];
+        
+        // Actualizar estadísticas
+        actualizarEstadisticasHistorial();
+        
+        // Renderizar tabla
+        renderizarTablaHistorial();
+        
+        // Generar gráficos
+        generarGraficosHistorial();
+        
+    } catch (error) {
+        console.error("Error cargando historial de partos:", error);
+        document.getElementById('historial-table-body').innerHTML = `
+            <tr><td colspan="7" class="no-data error">
+                <i class="fas fa-exclamation-triangle"></i> Error cargando historial: ${error.message}
+            </td></tr>
+        `;
+        historialPartos = [];
+        historialFiltrado = [];
+    } finally {
+        ocultarLoading();
+    }
+}
+
+// Actualizar estadísticas del historial
+function actualizarEstadisticasHistorial() {
+    if (historialPartos.length === 0) {
+        document.getElementById('historial-total').textContent = '0';
+        document.getElementById('historial-exitosos').textContent = '0';
+        document.getElementById('historial-terneros').textContent = '0';
+        document.getElementById('historial-promedio').textContent = '0.0';
+        return;
+    }
+    
+    const totalPartos = historialPartos.length;
+    const partosExitosos = historialPartos.filter(p => p.estado === 'Finalizada').length;
+    const totalTernerosVivos = historialPartos.reduce((sum, p) => sum + (p.terneros_vivos || 0), 0);
+    const totalTernerosMuertos = historialPartos.reduce((sum, p) => sum + (p.terneros_muertos || 0), 0);
+    const totalTerneros = totalTernerosVivos + totalTernerosMuertos;
+    const promedioTerneros = totalPartos > 0 ? (totalTernerosVivos / partosExitosos).toFixed(1) : '0.0';
+    
+    document.getElementById('historial-total').textContent = totalPartos;
+    document.getElementById('historial-exitosos').textContent = partosExitosos;
+    document.getElementById('historial-terneros').textContent = totalTernerosVivos;
+    document.getElementById('historial-promedio').textContent = promedioTerneros;
+    
+    // Actualizar contador
+    document.getElementById('historial-count').textContent = `${totalPartos} partos registrados`;
+}
+
+// Renderizar tabla de historial
+function renderizarTablaHistorial() {
+    const tbody = document.getElementById('historial-table-body');
+    
+    if (!tbody) {
+        console.error("No se encontró historial-table-body");
+        return;
+    }
+    
+    if (historialFiltrado.length === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="7" class="no-data">
+                <i class="fas fa-search"></i> No se encontraron partos en el historial
+            </td></tr>
+        `;
+        actualizarPaginacionHistorial();
+        return;
+    }
+    
+    const inicio = (paginaHistorialActual - 1) * itemsPorPaginaHistorial;
+    const fin = inicio + itemsPorPaginaHistorial;
+    const partosPagina = historialFiltrado.slice(inicio, fin);
+    
+    const filasHTML = partosPagina.map(parto => {
+        const vacaInfo = parto.vacas || {};
+        const toroInfo = parto.toros || {};
+        
+        // Determinar clase de duración
+        let claseDuracion = '';
+        if (parto.duracion_gestacion) {
+            if (parto.duracion_gestacion < 270) claseDuracion = 'duracion-corta';
+            else if (parto.duracion_gestacion > 300) claseDuracion = 'duracion-larga';
+            else claseDuracion = 'duracion-normal';
+        }
+        
+        // Badge de estado
+        let badgeEstado = '';
+        let claseEstado = '';
+        if (parto.estado === 'Finalizada') {
+            badgeEstado = '<span class="badge-estado badge-exitoso">Exitoso</span>';
+            claseEstado = 'estado-exitoso';
+        } else if (parto.estado === 'Cancelada') {
+            badgeEstado = '<span class="badge-estado badge-cancelado">Cancelado</span>';
+            claseEstado = 'estado-cancelado';
+        }
+        
+        return `
+            <tr class="${claseEstado}">
+                <td>
+                    <strong>${parto.fecha_partoo_formateada}</strong>
+                    ${parto.duracion_gestacion ? 
+                        `<br><small class="duracion-gestacion ${claseDuracion}">${parto.duracion_gestacion} días</small>` : 
+                        ''}
+                </td>
+                <td>
+                    <strong>#${vacaInfo.id || parto.vaca_id}</strong><br>
+                    ${vacaInfo.nombre || 'Sin nombre'}<br>
+                    <small>${vacaInfo.raza || ''}</small>
+                </td>
+                <td>
+                    ${toroInfo.id ? 
+                        `<strong>#${toroInfo.id}</strong><br>
+                         ${toroInfo.nombre || 'Sin nombre'}<br>
+                         <small>${toroInfo.raza || ''}</small>` : 
+                        'No registrado'}
+                </td>
+                <td>
+                    <div class="terneros-info">
+                        ${parto.terneros_vivos > 0 ? 
+                            `<span class="terneros-vivos">✓ ${parto.terneros_vivos} vivo(s)</span>` : ''}
+                        ${parto.terneros_muertos > 0 ? 
+                            `<span class="terneros-muertos">✗ ${parto.terneros_muertos} muerto(s)</span>` : ''}
+                        ${parto.total_terneros === 0 ? 'Sin terneros' : ''}
+                    </div>
+                </td>
+                <td>${badgeEstado}</td>
+                <td>
+                    ${parto.duracion_gestacion ? 
+                        `${parto.duracion_gestacion} días` : 
+                        'N/A'}
+                </td>
+                <td>
+                    <div class="animal-actions">
+                        <button class="btn-action btn-view" onclick="verDetalleParto(${parto.id})" 
+                                title="Ver detalles">
+                            <i class="fas fa-eye"></i> Detalles
+                        </button>
+                        ${parto.estado === 'Finalizada' && parto.terneros_vivos > 0 ? 
+                            `<button class="btn-action btn-edit" onclick="verTernerosParto(${parto.id})" 
+                                    title="Ver terneros">
+                                <i class="fas fa-horse"></i> Terneros
+                            </button>` : ''}
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+    
+    tbody.innerHTML = filasHTML;
+    actualizarPaginacionHistorial();
+}
+
+// Filtrar historial
+function filtrarHistorial() {
+    const busqueda = document.getElementById('historial-search').value.toLowerCase();
+    const añoFiltro = document.getElementById('historial-fecha').value;
+    const estadoFiltro = document.getElementById('historial-estado').value;
+    const orden = document.getElementById('historial-orden').value;
+    
+    let resultados = historialPartos.filter(parto => {
+        // Búsqueda por ID de vaca, nombre o raza
+        const vacaInfo = parto.vacas || {};
+        const coincideBusqueda = 
+            (vacaInfo.id && vacaInfo.id.toString().includes(busqueda)) ||
+            (vacaInfo.nombre && vacaInfo.nombre.toLowerCase().includes(busqueda)) ||
+            (vacaInfo.raza && vacaInfo.raza.toLowerCase().includes(busqueda)) ||
+            (parto.vaca_id && parto.vaca_id.toString().includes(busqueda));
+        
+        // Filtro por año
+        let coincideAño = true;
+        if (añoFiltro !== 'all' && parto.fecha_parto) {
+            const añoParto = new Date(parto.fecha_parto).getFullYear();
+            coincideAño = añoParto.toString() === añoFiltro;
+        }
+        
+        // Filtro por estado
+        const coincideEstado = estadoFiltro === 'all' || parto.estado === estadoFiltro;
+        
+        return coincideBusqueda && coincideAño && coincideEstado;
+    });
+    
+    // Ordenar resultados
+    resultados.sort((a, b) => {
+        switch (orden) {
+            case 'fecha_desc':
+                return new Date(b.fecha_parto || 0) - new Date(a.fecha_parto || 0);
+            case 'fecha_asc':
+                return new Date(a.fecha_parto || 0) - new Date(b.fecha_parto || 0);
+            case 'terneros_desc':
+                return (b.terneros_vivos || 0) - (a.terneros_vivos || 0);
+            case 'vaca_asc':
+                const nombreA = a.vacas?.nombre || '';
+                const nombreB = b.vacas?.nombre || '';
+                return nombreA.localeCompare(nombreB);
+            default:
+                return 0;
+        }
+    });
+    
+    historialFiltrado = resultados;
+    paginaHistorialActual = 1;
+    renderizarTablaHistorial();
+}
+
+// Resetear filtros del historial
+function resetFiltrosHistorial() {
+    document.getElementById('historial-search').value = '';
+    document.getElementById('historial-fecha').value = 'all';
+    document.getElementById('historial-estado').value = 'all';
+    document.getElementById('historial-orden').value = 'fecha_desc';
+    
+    historialFiltrado = [...historialPartos];
+    paginaHistorialActual = 1;
+    renderizarTablaHistorial();
+}
+
+// Actualizar paginación del historial
+function actualizarPaginacionHistorial() {
+    const totalPaginas = Math.ceil(historialFiltrado.length / itemsPorPaginaHistorial);
+    const prevButton = document.getElementById('prev-page-historial');
+    const nextButton = document.getElementById('next-page-historial');
+    const pageInfo = document.getElementById('page-info-historial');
+    
+    if (prevButton && nextButton && pageInfo) {
+        prevButton.disabled = paginaHistorialActual === 1;
+        nextButton.disabled = paginaHistorialActual === totalPaginas || totalPaginas === 0;
+        pageInfo.textContent = `Página ${paginaHistorialActual} de ${totalPaginas}`;
+    }
+}
+
+// Cambiar página del historial
+function cambiarPaginaHistorial(direccion) {
+    const totalPaginas = Math.ceil(historialFiltrado.length / itemsPorPaginaHistorial);
+    const nuevaPagina = paginaHistorialActual + direccion;
+    
+    if (nuevaPagina >= 1 && nuevaPagina <= totalPaginas) {
+        paginaHistorialActual = nuevaPagina;
+        renderizarTablaHistorial();
+    }
+}
+
+// Ver detalle completo de un parto
+async function verDetalleParto(partoId) {
+    try {
+        mostrarLoading('Cargando detalles del parto...');
+        
+        const { data: parto, error } = await supabaseClient
+            .from('prenadas')
+            .select(`
+                *,
+                vacas (id, nombre, raza, edad_aproximada, total_partos, observaciones),
+                toros (id, nombre, raza, edad_aproximada)
+            `)
+            .eq('id', partoId)
+            .single();
+        
+        if (error) throw error;
+        
+        // Calcular duración de gestación
+        let duracionGestacion = null;
+        let estadoDuracion = 'normal';
+        if (parto.fecha_prenada && parto.fecha_parto) {
+            const fechaInicio = new Date(parto.fecha_prenada);
+            const fechaFin = new Date(parto.fecha_parto);
+            duracionGestacion = Math.round((fechaFin - fechaInicio) / (1000 * 60 * 60 * 24));
+            
+            if (duracionGestacion < 270) estadoDuracion = 'corta';
+            else if (duracionGestacion > 300) estadoDuracion = 'larga';
+        }
+        
+        // Obtener terneros de este parto
+        let terneros = [];
+        if (parto.estado === 'Finalizada' && parto.vaca_id) {
+            const { data: ternerosData } = await supabaseClient
+                .from('terneros')
+                .select('*')
+                .eq('madre', parto.vaca_id)
+                .eq('fecha_nacimiento', parto.fecha_parto);
+            
+            terneros = ternerosData || [];
+        }
+        
+        // Crear HTML del detalle
+        const detallesHTML = `
+            <div class="parto-detalles">
+                <div class="detalle-seccion">
+                    <h4><i class="fas fa-info-circle"></i> Información del Parto</h4>
+                    <div class="detalle-grid">
+                        <div class="detalle-item">
+                            <span class="detalle-label">Estado:</span>
+                            <span class="detalle-value">
+                                ${parto.estado === 'Finalizada' ? 
+                                    '<span class="badge-estado badge-exitoso">Exitoso</span>' : 
+                                    '<span class="badge-estado badge-cancelado">Cancelado</span>'}
+                            </span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Fecha de Monta:</span>
+                            <span class="detalle-value">${formatearFecha(parto.fecha_prenada)}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Fecha de Parto:</span>
+                            <span class="detalle-value">${formatearFecha(parto.fecha_parto)}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Duración Gestación:</span>
+                            <span class="detalle-value ${estadoDuracion}">
+                                ${duracionGestacion ? `${duracionGestacion} días` : 'N/A'}
+                            </span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Terneros Vivos:</span>
+                            <span class="detalle-value">${parto.terneros_vivos || 0}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Terneros Muertos:</span>
+                            <span class="detalle-value">${parto.terneros_muertos || 0}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Total Terneros:</span>
+                            <span class="detalle-value">${(parto.terneros_vivos || 0) + (parto.terneros_muertos || 0)}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="detalle-seccion">
+                    <h4><i class="fas fa-cow"></i> Información de la Vaca</h4>
+                    <div class="detalle-grid">
+                        <div class="detalle-item">
+                            <span class="detalle-label">ID:</span>
+                            <span class="detalle-value">#${parto.vacas?.id || parto.vaca_id}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Nombre:</span>
+                            <span class="detalle-value">${parto.vacas?.nombre || 'Sin nombre'}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Raza:</span>
+                            <span class="detalle-value">${parto.vacas?.raza || 'N/A'}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Edad:</span>
+                            <span class="detalle-value">${parto.vacas?.edad_aproximada || 'N/A'} años</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Partos Totales:</span>
+                            <span class="detalle-value">${parto.vacas?.total_partos || 0}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                ${parto.toros ? `
+                <div class="detalle-seccion">
+                    <h4><i class="fas fa-horse-head"></i> Información del Toro</h4>
+                    <div class="detalle-grid">
+                        <div class="detalle-item">
+                            <span class="detalle-label">ID:</span>
+                            <span class="detalle-value">#${parto.toros.id}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Nombre:</span>
+                            <span class="detalle-value">${parto.toros.nombre || 'Sin nombre'}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Raza:</span>
+                            <span class="detalle-value">${parto.toros.raza || 'N/A'}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Edad:</span>
+                            <span class="detalle-value">${parto.toros.edad_aproximada || 'N/A'} años</span>
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
+                
+                ${parto.observaciones || parto.observaciones_parto ? `
+                <div class="detalle-seccion">
+                    <h4><i class="fas fa-sticky-note"></i> Observaciones</h4>
+                    <div style="padding: 10px; background: white; border-radius: 8px; border: 1px solid #e0e0e0;">
+                        ${parto.observaciones ? `<p><strong>Durante gestación:</strong><br>${parto.observaciones}</p>` : ''}
+                        ${parto.observaciones_parto ? `<p><strong>Durante parto:</strong><br>${parto.observaciones_parto}</p>` : ''}
+                    </div>
+                </div>
+                ` : ''}
+                
+                ${terneros.length > 0 ? `
+                <div class="detalle-seccion">
+                    <h4><i class="fas fa-horse"></i> Terneros Registrados</h4>
+                    <div class="lista-terneros">
+                        ${terneros.map(ternero => `
+                            <div class="ternero-item">
+                                <div class="ternero-info">
+                                    <span class="ternero-nombre">${ternero.nombre || 'Sin nombre'}</span>
+                                    <div class="ternero-datos">
+                                        <span>ID: #${ternero.id}</span>
+                                        <span>Género: ${ternero.genero}</span>
+                                        <span>Raza: ${ternero.raza || 'N/A'}</span>
+                                    </div>
+                                </div>
+                                <button class="btn-action btn-view small" onclick="verDetalles(${ternero.id})">
+                                    <i class="fas fa-eye"></i> Ver
+                                </button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+        `;
+        
+        // Crear modal dinámico para el detalle
+        const modalHTML = `
+            <div class="modal" id="detalle-parto-modal">
+                <div class="modal-content parto-detalle-modal">
+                    <div class="modal-header">
+                        <h3><i class="fas fa-baby"></i> Detalles del Parto</h3>
+                        <button class="btn-close" onclick="document.getElementById('detalle-parto-modal').classList.add('hidden')">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        ${detallesHTML}
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn-secondary" onclick="document.getElementById('detalle-parto-modal').classList.add('hidden')">
+                            <i class="fas fa-times"></i> Cerrar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Agregar modal al DOM si no existe
+        let modalExistente = document.getElementById('detalle-parto-modal');
+        if (modalExistente) {
+            modalExistente.remove();
+        }
+        
+        document.body.insertAdjacentHTML('beforeend', modalHTML);
+        document.getElementById('detalle-parto-modal').classList.remove('hidden');
+        
+        ocultarLoading();
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error cargando detalle de parto:', error);
+        mostrarError('Error', 'No se pudieron cargar los detalles del parto', error.message);
+    }
+}
+
+// Ver terneros de un parto específico
+async function verTernerosParto(partoId) {
+    try {
+        mostrarLoading('Buscando terneros...');
+        
+        // Obtener información del parto primero
+        const { data: parto, error: errorParto } = await supabaseClient
+            .from('prenadas')
+            .select('vaca_id, fecha_parto')
+            .eq('id', partoId)
+            .single();
+        
+        if (errorParto) throw errorParto;
+        
+        // Buscar terneros con esa madre y fecha de nacimiento
+        const { data: terneros, error: errorTerneros } = await supabaseClient
+            .from('terneros')
+            .select('*')
+            .eq('madre', parto.vaca_id)
+            .eq('fecha_nacimiento', parto.fecha_parto);
+        
+        if (errorTerneros) throw errorTerneros;
+        
+        if (terneros.length === 0) {
+            ocultarLoading();
+            mostrarAdvertencia('Sin Terneros', 'No se encontraron terneros registrados para este parto');
+            return;
+        }
+        
+        // Redirigir a la pestaña de consulta con filtro
+        cambiarTab('consulta');
+        
+        // Filtrar solo los terneros de este parto
+        setTimeout(() => {
+            document.getElementById('search-input').value = terneros.map(t => t.id).join(',');
+            document.getElementById('filter-type').value = 'Ternero';
+            filtrarAnimales();
+            
+            ocultarLoading();
+            mostrarConfirmacion(`Se encontraron ${terneros.length} ternero(s) de este parto`);
+        }, 500);
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error buscando terneros:', error);
+        mostrarError('Error', 'No se pudieron cargar los terneros del parto', error.message);
+    }
+}
+
+// Generar gráficos del historial
+function generarGraficosHistorial() {
+    // Destruir gráficos existentes si hay
+    if (charts.historialMensual) charts.historialMensual.destroy();
+    if (charts.resultadosPartos) charts.resultadosPartos.destroy();
+    
+    // Gráfico de partos por mes
+    const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const partosMensuales = new Array(12).fill(0);
+    const ternerosMensuales = new Array(12).fill(0);
+    
+    historialPartos.forEach(parto => {
+        if (parto.fecha_parto) {
+            const fecha = new Date(parto.fecha_parto);
+            const mes = fecha.getMonth();
+            partosMensuales[mes]++;
+            ternerosMensuales[mes] += (parto.terneros_vivos || 0);
+        }
+    });
+    
+    const ctxMensual = document.getElementById('chart-partos-mensuales')?.getContext('2d');
+    if (ctxMensual) {
+        charts.historialMensual = new Chart(ctxMensual, {
+            type: 'bar',
+            data: {
+                labels: meses,
+                datasets: [
+                    {
+                        label: 'Partos',
+                        data: partosMensuales,
+                        backgroundColor: 'rgba(33, 150, 243, 0.7)',
+                        borderColor: '#2196f3',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Terneros Nacidos',
+                        data: ternerosMensuales,
+                        backgroundColor: 'rgba(76, 175, 80, 0.7)',
+                        borderColor: '#4caf50',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'top'
+                    }
+                }
+            }
+        });
+    }
+    
+    // Gráfico de distribución por resultado
+    const partosExitosos = historialPartos.filter(p => p.estado === 'Finalizada').length;
+    const partosCancelados = historialPartos.filter(p => p.estado === 'Cancelada').length;
+    
+    const ctxResultados = document.getElementById('chart-resultados-partos')?.getContext('2d');
+    if (ctxResultados) {
+        charts.resultadosPartos = new Chart(ctxResultados, {
+            type: 'pie',
+            data: {
+                labels: ['Exitosos', 'Cancelados'],
+                datasets: [{
+                    data: [partosExitosos, partosCancelados],
+                    backgroundColor: ['#4caf50', '#f44336'],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label || '';
+                                const value = context.raw || 0;
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = Math.round((value / total) * 100);
+                                return `${label}: ${value} (${percentage}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+    // ================= MANEJO DE ERRORES GLOBAL =================
+window.addEventListener('error', function(event) {
+    console.error('Error global capturado:', event.error);
+    
+    // Prevenir múltiples mensajes de error
+    if (document.getElementById('error-message').classList.contains('hidden')) {
+        mostrarError(
+            'Error en la Aplicación',
+            'Ha ocurrido un error inesperado',
+            `Error: ${event.error?.message || 'Desconocido'}\n\nPor favor, recarga la página e intenta nuevamente.`
+        );
+    }
+    
+    // Prevenir que el error se propague
+    event.preventDefault();
 });
 
-// ================= FUNCIÓN PARA LIMPIAR TODOS LOS MODALES =================
+// Capturar errores no manejados en promesas
+window.addEventListener('unhandledrejection', function(event) {
+    console.error('Promesa rechazada no manejada:', event.reason);
+    
+    mostrarError(
+        'Error en Operación',
+        'La operación no pudo completarse',
+        `Error: ${event.reason?.message || 'Error desconocido en operación asíncrona'}`
+    );
+    
+    event.preventDefault();
+});
 
-function cerrarTodosLosModales() {
-    document.getElementById('confirmation-message').classList.add('hidden');
-    document.getElementById('error-message').classList.add('hidden');
-    document.getElementById('warning-message').classList.add('hidden');
-    document.getElementById('animal-detail-modal').classList.add('hidden');
-    ocultarLoading();
+// ================= SISTEMA DE TOASTS =================
+function mostrarToast(tipo, titulo, mensaje, duracion = 5000) {
+    const container = document.getElementById('toast-container') || crearContenedorToasts();
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${tipo}`;
+    
+    const icono = {
+        success: 'fa-check-circle',
+        error: 'fa-times-circle',
+        warning: 'fa-exclamation-triangle',
+        info: 'fa-info-circle'
+    }[tipo] || 'fa-info-circle';
+    
+    toast.innerHTML = `
+        <div class="toast-icon">
+            <i class="fas ${icono}"></i>
+        </div>
+        <div class="toast-content">
+            <div class="toast-title">${sanitizarTexto(titulo)}</div>
+            <div class="toast-message">${sanitizarTexto(mensaje)}</div>
+        </div>
+        <button class="toast-close" onclick="this.parentElement.remove()">
+            <i class="fas fa-times"></i>
+        </button>
+    `;
+    
+    container.appendChild(toast);
+    
+    // Auto-eliminar después de la duración
+    setTimeout(() => {
+        if (toast.parentElement) {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(100%)';
+            setTimeout(() => toast.remove(), 300);
+        }
+    }, duracion);
+    
+    return toast;
 }
+
+function crearContenedorToasts() {
+    const container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+    return container;
+}
+
+// Proteger contra múltiples clics
+function protegerContraClicsMultiples(elemento, tiempoMs = 2000) {
+    if (elemento.disabled) return false;
+    
+    elemento.disabled = true;
+    elemento.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Procesando...';
+    
+    setTimeout(() => {
+        elemento.disabled = false;
+        // Restaurar texto original basado en el tipo de botón
+        if (elemento.classList.contains('btn-primary')) {
+            elemento.innerHTML = '<i class="fas fa-save"></i> Guardar';
+        }
+    }, tiempoMs);
+    
+    return true;
+}
+
+// ================= VALIDACIÓN EN TIEMPO REAL MEJORADA =================
+function configurarValidacionTiempoRealMejorada() {
+    // Configurar para todos los inputs de ID
+    document.querySelectorAll('input[type="number"][id$="_id"]').forEach(input => {
+        input.addEventListener('input', debounce(async (e) => {
+            await validarCampoIdMejorado(e.target);
+        }, 600));
+    });
+    
+    // Configurar para campos de texto
+    document.querySelectorAll('input[type="text"], textarea').forEach(input => {
+        input.addEventListener('input', debounce((e) => {
+            validarCampoTexto(e.target);
+        }, 500));
+    });
+    
+    // Configurar para campos numéricos
+    document.querySelectorAll('input[type="number"]:not([id$="_id"])').forEach(input => {
+        input.addEventListener('input', debounce((e) => {
+            validarCampoNumero(e.target);
+        }, 500));
+    });
+    
+    // Configurar para fechas
+    document.querySelectorAll('input[type="date"]').forEach(input => {
+        input.addEventListener('change', debounce((e) => {
+            validarCampoFecha(e.target);
+        }, 300));
+    });
+}
+
+async function validarCampoIdMejorado(input) {
+    const valor = input.value.trim();
+    const formGroup = input.closest('.form-group');
+    if (!formGroup) return;
+    
+    // Limpiar estados anteriores
+    formGroup.classList.remove('error', 'success', 'warning');
+    const mensajes = formGroup.querySelectorAll('.error-text, .success-text, .warning-text, .validation-badge');
+    mensajes.forEach(msg => msg.remove());
+    
+    if (!valor) {
+        mostrarEstadoCampo(formGroup, 'info', 'ID requerido');
+        return;
+    }
+    
+    // Validar formato básico
+    const validacionFormato = validarFormatoId(valor);
+    if (!validacionFormato.valida) {
+        mostrarEstadoCampo(formGroup, 'error', validacionFormato.mensaje);
+        return;
+    }
+    
+    // Mostrar estado de verificación
+    const badge = document.createElement('div');
+    badge.className = 'validation-badge checking';
+    badge.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verificando disponibilidad...';
+    formGroup.appendChild(badge);
+    
+    try {
+        // Verificar disponibilidad con timeout
+        const resultado = await ejecutarConTimeout(
+            validarIdUnico(valor, obtenerTipoAnimalPorCampo(input.id)),
+            5000,
+            'Timeout verificando ID'
+        );
+        
+        badge.remove();
+        
+        if (resultado.disponible) {
+            mostrarEstadoCampo(formGroup, 'success', resultado.mensaje);
+        } else {
+            mostrarEstadoCampo(formGroup, 'error', resultado.mensaje);
+        }
+    } catch (error) {
+        badge.remove();
+        mostrarEstadoCampo(formGroup, 'warning', 
+            'No se pudo verificar el ID. Puede que ya esté en uso.');
+    }
+}
+
+function validarCampoTexto(input) {
+    const valor = input.value;
+    const formGroup = input.closest('.form-group');
+    if (!formGroup) return;
+    
+    // Solo validar si no es campo opcional vacío
+    if (!valor && !input.hasAttribute('required')) return;
+    
+    const maxLength = input.getAttribute('maxlength') || 100;
+    const validacion = validarLongitud(valor, maxLength, input.previousElementSibling?.textContent || 'Campo');
+    
+    if (!validacion.valida) {
+        mostrarEstadoCampo(formGroup, 'error', validacion.mensaje);
+    } else {
+        formGroup.classList.remove('error');
+        const errorMsg = formGroup.querySelector('.error-text');
+        if (errorMsg) errorMsg.remove();
+    }
+}
+
+function validarCampoNumero(input) {
+    const valor = input.value;
+    const formGroup = input.closest('.form-group');
+    if (!formGroup || (!valor && !input.hasAttribute('required'))) return;
+    
+    const min = parseInt(input.getAttribute('min')) || 0;
+    const max = parseInt(input.getAttribute('max')) || 100;
+    const campoNombre = input.previousElementSibling?.textContent || 'Campo';
+    
+    const validacion = validarRango(valor, min, max, campoNombre);
+    
+    if (!validacion.valida) {
+        mostrarEstadoCampo(formGroup, 'error', validacion.mensaje);
+    } else {
+        formGroup.classList.remove('error');
+        const errorMsg = formGroup.querySelector('.error-text');
+        if (errorMsg) errorMsg.remove();
+    }
+}
+
+function validarCampoFecha(input) {
+    const valor = input.value;
+    const formGroup = input.closest('.form-group');
+    if (!formGroup || (!valor && !input.hasAttribute('required'))) return;
+    
+    const validacion = validarFecha(valor);
+    
+    if (!validacion.valida) {
+        mostrarEstadoCampo(formGroup, 'error', validacion.mensaje);
+    } else {
+        formGroup.classList.remove('error');
+        const errorMsg = formGroup.querySelector('.error-text');
+        if (errorMsg) errorMsg.remove();
+    }
+}
+
+function mostrarEstadoCampo(formGroup, tipo, mensaje) {
+    formGroup.classList.remove('error', 'success', 'warning', 'info');
+    formGroup.classList.add(tipo);
+    
+    const mensajeAnterior = formGroup.querySelector('.error-text, .success-text, .warning-text, .info-text');
+    if (mensajeAnterior) mensajeAnterior.remove();
+    
+    const msgElement = document.createElement('div');
+    msgElement.className = `${tipo}-text`;
+    
+    let icono = '';
+    switch (tipo) {
+        case 'success': icono = 'fa-check-circle'; break;
+        case 'error': icono = 'fa-times-circle'; break;
+        case 'warning': icono = 'fa-exclamation-triangle'; break;
+        case 'info': icono = 'fa-info-circle'; break;
+    }
+    
+    msgElement.innerHTML = `<i class="fas ${icono}"></i> ${mensaje}`;
+    formGroup.appendChild(msgElement);
+}
+// Proteger contra múltiples clics
+function protegerContraClicsMultiples(elemento, tiempoMs = 2000) {
+    if (elemento.disabled) return false;
+    
+    elemento.disabled = true;
+    elemento.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Procesando...';
+    
+    setTimeout(() => {
+        elemento.disabled = false;
+        // Restaurar texto original basado en el tipo de botón
+        if (elemento.classList.contains('btn-primary')) {
+            elemento.innerHTML = '<i class="fas fa-save"></i> Guardar';
+        }
+    }, tiempoMs);
+    
+    return true;
+}
+    
+    // Gráfico de distribución por resultado
+    const partosExitosos = historialPartos.filter(p => p.estado === 'Finalizada').length;
+    const partosCancelados = historialPartos.filter(p => p.estado === 'Cancelada').length;
+    
+    const ctxResultados = document.getElementById('chart-resultados-partos')?.getContext('2d');
+    if (ctxResultados) {
+        charts.resultadosPartos = new Chart(ctxResultados, {
+            type: 'pie',
+            data: {
+                labels: ['Exitosos', 'Cancelados'],
+                datasets: [{
+                    data: [partosExitosos, partosCancelados],
+                    backgroundColor: ['#4caf50', '#f44336'],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label || '';
+                                const value = context.raw || 0;
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = Math.round((value / total) * 100);
+                                return `${label}: ${value} (${percentage}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+// Generar reporte del historial
+async function generarReporteHistorial() {
+    if (historialPartos.length === 0) {
+        mostrarAdvertencia('Sin Datos', 'No hay partos registrados en el historial para exportar.');
+        return;
+    }
+    
+    try {
+        mostrarLoading('Generando reporte del historial...');
+        
+        // Preparar datos para el CSV
+        const headers = [
+            'ID Parto', 'Fecha Parto', 'Vaca ID', 'Nombre Vaca', 'Raza Vaca',
+            'Toro ID', 'Nombre Toro', 'Raza Toro', 'Fecha Monta', 
+            'Duración Gestación (días)', 'Terneros Vivos', 'Terneros Muertos',
+            'Total Terneros', 'Estado', 'Observaciones', 'Observaciones Parto'
+        ];
+        
+        const csvData = historialPartos.map(parto => {
+            const vaca = parto.vacas || {};
+            const toro = parto.toros || {};
+            
+            return [
+                parto.id,
+                formatearFecha(parto.fecha_parto),
+                parto.vaca_id,
+                vaca.nombre || '',
+                vaca.raza || '',
+                toro.id || '',
+                toro.nombre || '',
+                toro.raza || '',
+                formatearFecha(parto.fecha_prenada),
+                parto.duracion_gestacion || '',
+                parto.terneros_vivos || 0,
+                parto.terneros_muertos || 0,
+                (parto.terneros_vivos || 0) + (parto.terneros_muertos || 0),
+                parto.estado,
+                parto.observaciones ? `"${parto.observaciones.replace(/"/g, '""')}"` : '',
+                parto.observaciones_parto ? `"${parto.observaciones_parto.replace(/"/g, '""')}"` : ''
+            ];
+        });
+        
+        const csvContent = [headers.join(','), ...csvData.map(row => row.join(','))].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        
+        const fechaActual = new Date().toISOString().split('T')[0];
+        link.setAttribute('href', url);
+        link.setAttribute('download', `historial_partos_${fechaActual}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        ocultarLoading();
+        mostrarConfirmacion('Reporte del historial generado exitosamente');
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error generando reporte:', error);
+        mostrarError('Error', 'No se pudo generar el reporte del historial', error.message);
+    }
+}
+
+// Actualizar años en el filtro
+function actualizarFiltroAnios() {
+    const selectAnio = document.getElementById('historial-fecha');
+    
+    // Obtener años únicos de los partos
+    const aniosUnicos = new Set();
+    historialPartos.forEach(parto => {
+        if (parto.fecha_parto) {
+            const anio = new Date(parto.fecha_parto).getFullYear();
+            aniosUnicos.add(anio);
+        }
+    });
+    
+    // Ordenar años descendente
+    const aniosOrdenados = Array.from(aniosUnicos).sort((a, b) => b - a);
+    
+    // Limpiar opciones excepto "Todos los años"
+    const opcionesActuales = selectAnio.querySelectorAll('option');
+    opcionesActuales.forEach((opcion, index) => {
+        if (index > 0) opcion.remove();
+    });
+    
+    // Agregar años encontrados
+    aniosOrdenados.forEach(anio => {
+        const option = document.createElement('option');
+        option.value = anio;
+        option.textContent = anio;
+        selectAnio.appendChild(option);
+    });
+}
+
+// Inicialización de eventos para prenadas
+document.addEventListener('DOMContentLoaded', function() {
+    // Configurar fecha mínima/máxima para fecha de prenada
+    const fechaPrenadaInput = document.getElementById('p_fecha');
+    if (fechaPrenadaInput) {
+        const hoy = new Date().toISOString().split('T')[0];
+        fechaPrenadaInput.max = hoy;
+        fechaPrenadaInput.min = '2000-01-01';
+    }
+    
+    // Evento para pestaña de prenadas
+    const tabPrenadas = document.getElementById('tab-prenadas');
+    if (tabPrenadas) {
+        tabPrenadas.addEventListener('click', function() {
+            // Pequeño delay para asegurar que la pestaña esté activa
+            setTimeout(() => {
+                if (document.getElementById('tab-content-prenadas').classList.contains('active')) {
+                    cargarPrenadas();
+                }
+            }, 100);
+        });
+    }
+    
+    console.log("Sistema de prenadas inicializado correctamente");
+
+    // Inicializar filtro de años cuando se carga el historial
+    const tabHistorial = document.getElementById('tab-historial');
+    if (tabHistorial) {
+        tabHistorial.addEventListener('click', function() {
+            setTimeout(() => {
+                if (document.getElementById('tab-content-historial').classList.contains('active')) {
+                    cargarHistorialPartos();
+                }
+            }, 100);
+        });
+    }
+    
+    console.log("Sistema de historial de partos listo");
+});
+

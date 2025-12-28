@@ -44,6 +44,12 @@
                 <button class="tab" onclick="cambiarTab('estadisticas')" id="tab-estadisticas">
                     <i class="fas fa-chart-bar"></i> Estadísticas
                 </button>
+                <button class="tab" onclick="cambiarTab('prenadas')" id="tab-prenadas">
+                    <i class="fas fa-baby"></i> Gestación y Partos
+                </button>
+                <button class="tab" onclick="cambiarTab('historial')" id="tab-historial">
+                    <i class="fas fa-history"></i> Historial de Partos
+                </button>
             </div>
         </nav>
 
@@ -281,7 +287,6 @@
                             <button class="btn-secondary" onclick="resetFilters()">
                                 <i class="fas fa-redo"></i> Restablecer
                             </button>
-
                             <button class="btn-primary" onclick="cargarAnimales()">
                                 <i class="fas fa-sync-alt"></i> Actualizar
                             </button>
@@ -337,9 +342,6 @@
                             <h3><i class="fas fa-table"></i> Lista de Animales</h3>
                             <div class="table-actions">
                                 <span id="table-count">Mostrando 0 animales</span>
-                                <button class="btn-icon" onclick="exportarDatos()" title="Exportar datos">
-                                    <i class="fas fa-download"></i>
-                                </button>
                             </div>
                         </div>
 
@@ -486,6 +488,258 @@
                 </section>
             </div>
 
+            <!-- ================= PESTAÑA DE HISTORIAL DE PARTOS ================= -->
+            <div id="tab-content-historial" class="tab-content">
+                <section class="historial-panel">
+                    <div class="historial-header">
+                        <h2><i class="fas fa-history"></i> Historial de Partos</h2>
+                        <p class="subtitle">Registro completo de todos los partos registrados en el sistema</p>
+                    </div>
+            
+                    <!-- Filtros para el historial -->
+                    <div class="filters-section">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="historial-search" placeholder="Buscar por ID vaca, nombre, raza..."
+                                onkeyup="filtrarHistorial()">
+                            <button class="btn-icon" onclick="filtrarHistorial()" title="Buscar">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+            
+                        <div class="filter-controls">
+                            <div class="filter-group">
+                                <label for="historial-fecha"><i class="fas fa-calendar-alt"></i> Filtrar por Año</label>
+                                <select id="historial-fecha" onchange="filtrarHistorial()">
+                                    <option value="all">Todos los años</option>
+                                    <option value="2024">2024</option>
+                                    <option value="2023">2023</option>
+                                    <option value="2022">2022</option>
+                                </select>
+                            </div>
+            
+                            <div class="filter-group">
+                                <label for="historial-estado"><i class="fas fa-filter"></i> Estado</label>
+                                <select id="historial-estado" onchange="filtrarHistorial()">
+                                    <option value="all">Todos los estados</option>
+                                    <option value="Finalizada">Partos exitosos</option>
+                                    <option value="Cancelada">Cancelados</option>
+                                </select>
+                            </div>
+            
+                            <div class="filter-group">
+                                <label for="historial-orden"><i class="fas fa-sort"></i> Ordenar por</label>
+                                <select id="historial-orden" onchange="filtrarHistorial()">
+                                    <option value="fecha_desc">Fecha más reciente</option>
+                                    <option value="fecha_asc">Fecha más antigua</option>
+                                    <option value="terneros_desc">Más terneros</option>
+                                    <option value="vaca_asc">Nombre de vaca (A-Z)</option>
+                                </select>
+                            </div>
+            
+                            <button class="btn-secondary" onclick="resetFiltrosHistorial()">
+                                <i class="fas fa-redo"></i> Limpiar
+                            </button>
+            
+                            <button class="btn-primary" onclick="generarReporteHistorial()">
+                                <i class="fas fa-file-export"></i> Exportar
+                            </button>
+                        </div>
+                    </div>
+            
+                    <!-- Estadísticas del historial -->
+                    <div class="quick-stats historial-stats">
+                        <div class="stat-card">
+                            <div class="stat-icon total">
+                                <i class="fas fa-baby"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="historial-total">0</h3>
+                                <p>Total Partos</p>
+                            </div>
+                        </div>
+            
+                        <div class="stat-card">
+                            <div class="stat-icon success">
+                                <i class="fas fa-check-circle"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="historial-exitosos">0</h3>
+                                <p>Exitosos</p>
+                            </div>
+                        </div>
+            
+                        <div class="stat-card">
+                            <div class="stat-icon terneros">
+                                <i class="fas fa-horse"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="historial-terneros">0</h3>
+                                <p>Terneros Totales</p>
+                            </div>
+                        </div>
+            
+                        <div class="stat-card">
+                            <div class="stat-icon promedio">
+                                <i class="fas fa-chart-line"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="historial-promedio">0.0</h3>
+                                <p>Promedio/Terneros</p>
+                            </div>
+                        </div>
+                    </div>
+            
+                    <!-- Tabla de Historial -->
+                    <div class="table-container">
+                        <div class="table-header">
+                            <h3><i class="fas fa-list"></i> Registro de Partos</h3>
+                            <div class="table-actions">
+                                <span id="historial-count">0 partos registrados</span>
+                            </div>
+                        </div>
+            
+                        <div class="table-wrapper">
+                            <table id="historial-table">
+                                <thead>
+                                    <tr>
+                                        <th>Fecha Parto</th>
+                                        <th>Vaca</th>
+                                        <th>Toro</th>
+                                        <th>Terneros</th>
+                                        <th>Estado</th>
+                                        <th>Duración</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="historial-table-body">
+                                    <tr>
+                                        <td colspan="7" class="no-data">
+                                            <i class="fas fa-spinner fa-spin"></i> Cargando historial...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+            
+                        <!-- Paginación para historial -->
+                        <div class="pagination">
+                            <button class="btn-pagination" onclick="cambiarPaginaHistorial(-1)" disabled id="prev-page-historial">
+                                <i class="fas fa-chevron-left"></i> Anterior
+                            </button>
+                            <span id="page-info-historial">Página 1 de 1</span>
+                            <button class="btn-pagination" onclick="cambiarPaginaHistorial(1)" disabled id="next-page-historial">
+                                Siguiente <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+            
+                    <!-- Gráficos del historial -->
+                    <div class="stats-row">
+                        <div class="stat-card-large">
+                            <h3><i class="fas fa-chart-bar"></i> Partos por Mes</h3>
+                            <div class="chart-container">
+                                <canvas id="chart-partos-mensuales"></canvas>
+                            </div>
+                        </div>
+            
+                        <div class="stat-card-large">
+                            <h3><i class="fas fa-chart-pie"></i> Distribución por Resultado</h3>
+                            <div class="chart-container">
+                                <canvas id="chart-resultados-partos"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+<!-- ================= PESTAÑA DE PRENADAS ================= -->
+            <div id="tab-content-prenadas" class="tab-content">
+                <section class="prenadas-panel">
+                    <div class="prenadas-header">
+                        <h2><i class="fas fa-baby"></i> Gestación y Partos</h2>
+                        <p class="subtitle">Registro y seguimiento de vacas preñadas</p>
+                    </div>
+
+                    <!-- Botón para registrar nueva prenada -->
+                    <div class="prenadas-actions">
+                        <button class="btn-primary" onclick="mostrarFormularioPrenada()">
+                            <i class="fas fa-plus-circle"></i> Registrar Nueva Prenada
+                        </button>
+                        <button class="btn-secondary" onclick="cargarPrenadas()">
+                            <i class="fas fa-sync-alt"></i> Actualizar Lista
+                        </button>
+                    </div>
+
+                    <!-- Estadísticas Rápidas de Prenadas -->
+                    <div class="quick-stats prenadas-stats">
+                        <div class="stat-card">
+                            <div class="stat-icon prenada">
+                                <i class="fas fa-baby"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="stat-prenadas-total">0</h3>
+                                <p>Vacas Prenadas</p>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="stat-icon cercano">
+                                <i class="fas fa-exclamation-circle"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="stat-prenadas-cercanas">0</h3>
+                                <p>Partos Próximos</p>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="stat-icon retrasado">
+                                <i class="fas fa-clock"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="stat-prenadas-retrasadas">0</h3>
+                                <p>Retrasadas</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tabla de Prenadas -->
+                    <div class="table-container">
+                        <div class="table-header">
+                            <h3><i class="fas fa-list"></i> Vacas Prenadas</h3>
+                            <div class="table-actions">
+                                <span id="prenadas-count">0 vacas preñadas</span>
+                            </div>
+                        </div>
+
+                        <div class="table-wrapper">
+                            <table id="prenadas-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID Vaca</th>
+                                        <th>Nombre</th>
+                                        <th>Raza</th>
+                                        <th>Edad</th>
+                                        <th>Fecha Prenada</th>
+                                        <th>Parto Estimado</th>
+                                        <th>Toro Padre</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="prenadas-table-body">
+                                    <!-- Los datos se cargarán aquí dinámicamente -->
+                                    <tr>
+                                        <td colspan="8" class="no-data">
+                                            <i class="fas fa-spinner fa-spin"></i> Cargando prenadas...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+         </div> 
             <!-- Mensaje de Confirmación -->
             <div id="confirmation-message" class="confirmation-message hidden">
                 <div class="message-content">
@@ -508,6 +762,68 @@
                 <span><i class="fas fa-sync-alt"></i> Actualizado en tiempo real</span>
             </div>
         </footer>
+    </div>
+
+    <!-- ================= MODAL PARA REGISTRAR NUEVA PRENADA ================= -->
+    <div id="modal-prenada" class="modal hidden">
+        <div class="modal-content large-modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-baby"></i> Registrar Nueva Prenada</h3>
+                <button class="btn-close" onclick="cerrarModalPrenada()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="form-prenada">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="p_vaca"><i class="fas fa-cow"></i> Seleccionar Vaca</label>
+                            <select id="p_vaca" required>
+                                <option value="">Cargando vacas...</option>
+                            </select>
+                            <small class="form-hint">Selecciona la vaca que está preñada</small>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="p_toro"><i class="fas fa-horse-head"></i> Arete del Toro Padre (opcional)</label>
+                            <input type="number" id="p_toro" placeholder="Ej: 2001">
+                        </div>
+                        <div class="form-group">
+                            <label for="p_fecha"><i class="fas fa-calendar-alt"></i> Fecha de Monta/Inseminación</label>
+                            <input type="date" id="p_fecha" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label for="p_obs"><i class="fas fa-sticky-note"></i> Observaciones</label>
+                            <textarea id="p_obs" rows="3" placeholder="Notas sobre la gestación..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label><i class="fas fa-calendar-check"></i> Información Calculada</label>
+                            <div class="calculated-info">
+                                <p><strong>Parto estimado:</strong> <span id="fecha-parto-estimado">--/--/----</span></p>
+                                <p><strong>Días de gestación:</strong> <span id="dias-gestacion">0</span> días (aproximados)
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="cerrarModalPrenada()">
+                    <i class="fas fa-times"></i> Cancelar
+                </button>
+                <button class="btn-primary" onclick="registrarPrenada()">
+                    <i class="fas fa-save"></i> Registrar Prenada
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- Mensaje de Error -->
@@ -541,6 +857,133 @@
                 </button>
                 <button class="btn-error btn-error-primary" onclick="continuarOperacion()">
                     <i class="fas fa-check"></i> Continuar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Detalles de Prenada -->
+    <div id="prenada-detail-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-baby"></i> Detalles de Prenada</h3>
+                <button class="btn-close" onclick="document.getElementById('prenada-detail-modal').classList.add('hidden')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" id="prenada-detail-body">
+                <!-- Contenido dinámico -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary"
+                    onclick="document.getElementById('prenada-detail-modal').classList.add('hidden')">
+                    Cerrar
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal de Registro de Parto MEJORADO -->
+    <div id="registro-parto-modal" class="modal hidden">
+        <div class="modal-content large-modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-baby"></i> Registrar Parto y Terneros</h3>
+                <button class="btn-close" onclick="cerrarModalParto()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="parto-prenada-id">
+
+                <!-- Información de la Vaca -->
+                <div class="detail-section">
+                    <h5><i class="fas fa-cow"></i> Información de la Vaca</h5>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <span class="detail-label">Vaca:</span>
+                            <span class="detail-value" id="parto-vaca-nombre"></span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Parto Estimado:</span>
+                            <span class="detail-value" id="parto-fecha-estimada"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Información del Parto -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="parto-fecha"><i class="fas fa-calendar-alt"></i> Fecha Real del Parto</label>
+                        <input type="date" id="parto-fecha" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="parto-total"><i class="fas fa-baby"></i> Total de Terneros</label>
+                        <input type="number" id="parto-total" value="1" min="1" max="4"
+                            onchange="actualizarFormulariosTerneros()">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group full-width">
+                        <label for="parto-obs"><i class="fas fa-sticky-note"></i> Observaciones del Parto</label>
+                        <textarea id="parto-obs" rows="2"
+                            placeholder="Condiciones del parto, complicaciones, etc."></textarea>
+                    </div>
+                </div>
+
+                <!-- Terneros Muertos (si los hay) -->
+                <div class="form-row">
+                    <div class="form-group full-width">
+                        <label><i class="fas fa-times"></i> Terneros Nacidos Muertos</label>
+                        <input type="number" id="parto-muertos" value="0" min="0" max="4">
+                        <small class="form-hint">Cantidad de terneros que nacieron muertos (si aplica)</small>
+                    </div>
+                </div>
+
+                <!-- Sección para registrar cada ternero vivo -->
+                <div id="terneros-container">
+                    <h4><i class="fas fa-horse"></i> Registrar Terneros Vivos</h4>
+                    <p class="form-hint">Completa los datos de cada ternero nacido vivo:</p>
+
+                    <div class="ternero-form" id="ternero-1">
+                        <div class="ternero-header">
+                            <h5><i class="fas fa-horse"></i> Ternero 1</h5>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="te_id_1"><i class="fas fa-tag"></i> Número de Arete (ID)</label>
+                                <input type="number" id="te_id_1" placeholder="Ej: 4001" required
+                                    oninput="validarIdTernero(1)">
+                                <small class="form-hint">Identificador único del ternero</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="te_nombre_1"><i class="fas fa-signature"></i> Nombre</label>
+                                <input type="text" id="te_nombre_1" placeholder="Ej: Manchitas, Torito">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="te_genero_1"><i class="fas fa-venus-mars"></i> Género</label>
+                                <select id="te_genero_1">
+                                    <option value="Macho">Macho</option>
+                                    <option value="Hembra">Hembra</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="te_raza_1"><i class="fas fa-dna"></i> Raza</label>
+                                <input type="text" id="te_raza_1" placeholder="Ej: Holstein, Angus, etc.">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="cerrarModalParto()">
+                    <i class="fas fa-times"></i> Cancelar
+                </button>
+                <button class="btn-primary" onclick="confirmarRegistroParto()">
+                    <i class="fas fa-save"></i> Registrar Parto y Terneros
                 </button>
             </div>
         </div>
