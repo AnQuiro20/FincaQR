@@ -1,0 +1,15 @@
+/* styles.css - Archivo principal que importa todos los módulos */
+@import url('base.css');
+@import url('layout.css');
+@import url('components.css');
+@import url('forms.css');
+@import url('tables.css');
+@import url('modals.css');
+@import url('stats.css');
+@import url('prenadas.css');
+@import url('vacunas.css');
+
+/* ================= UTILITY CLASSES ================= */
+.hidden {
+    display: none !important;
+}

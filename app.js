@@ -20,6 +20,10 @@ let animalEditando = null;
 let modoEdicion = false;
 let vacasPrenadas = [];
 let prenadaEditando = null;
+let historialPartos = [];
+let historialFiltrado = [];
+let paginaHistorialActual = 1;
+const itemsPorPaginaHistorial = 10;
 
 // ================= UTILIDADES DE VALIDACIÓN Y SEGURIDAD =================
 function sanitizarTexto(texto) {
@@ -95,7 +99,6 @@ function validarLongitud(texto, maxLength, campo) {
     return { valida: true, valor: texto };
 }
 
-// Prevenir inyección SQL y XSS
 function escaparEntrada(valor) {
     if (typeof valor !== 'string') return valor;
     
@@ -108,7 +111,6 @@ function escaparEntrada(valor) {
         .replace(/\t/g, '\\t');
 }
 
-// Validar formato de ID
 function validarFormatoId(id) {
     if (!id && id !== 0) {
         return { valida: false, mensaje: 'ID es requerido' };
@@ -130,7 +132,6 @@ function validarFormatoId(id) {
     return { valida: true, valor: idNum };
 }
 
-// Timeout para operaciones asíncronas
 async function ejecutarConTimeout(promise, tiempoMs = 10000, mensajeError = 'Tiempo de espera agotado') {
     const timeout = new Promise((_, reject) => 
         setTimeout(() => reject(new Error(mensajeError)), tiempoMs)
@@ -139,7 +140,6 @@ async function ejecutarConTimeout(promise, tiempoMs = 10000, mensajeError = 'Tie
     return Promise.race([promise, timeout]);
 }
 
-// Validar conexión a Supabase
 async function verificarConexionSupabase() {
     try {
         const { data, error } = await ejecutarConTimeout(
@@ -236,6 +236,23 @@ function ocultarLoading() {
     document.getElementById('loading-overlay').classList.add('hidden');
 }
 
+function mostrarConfirmacion(mensaje) {
+    cerrarAdvertencia();
+    cerrarError();
+    document.getElementById('confirmation-text').textContent = mensaje;
+    document.getElementById('confirmation-message').classList.remove('hidden');
+    
+    setTimeout(() => {
+        const confirmacion = document.getElementById('confirmation-message');
+        if (confirmacion && !confirmacion.classList.contains('hidden')) cerrarConfirmacion();
+    }, 3000);
+}
+
+function cerrarConfirmacion() {
+    document.getElementById('confirmation-message').classList.add('hidden');
+    if (document.getElementById('tab-registro').classList.contains('active')) ocultarFormularios();
+}
+
 // ================= VALIDACIONES EN TIEMPO REAL =================
 async function validarIdUnico(id, tipoAnimal) {
     try {
@@ -282,49 +299,6 @@ async function validarPadreMadre(id, tipo) {
         console.error('Error validando padre/madre:', error);
         return { existe: false, mensaje: 'Error validando' };
     }
-}
-
-// ================= MANEJO DE EVENTOS EN TIEMPO REAL =================
-document.addEventListener('DOMContentLoaded', function() {
-    document.getElementById('current-year').textContent = new Date().getFullYear();
-    
-    // Configurar límites de fecha
-    const fechaInputs = document.querySelectorAll('input[type="date"]');
-    const today = new Date().toISOString().split('T')[0];
-    
-    fechaInputs.forEach(input => {
-        input.max = today;
-        input.min = '2000-01-01';
-    });
-    
-    // Configurar validaciones
-    configurarValidacionTiempoReal();
-    configurarValidacionTiempoRealMejorada();
-    
-    // Verificar conexión inicial
-    setTimeout(async () => {
-        const { conectado, mensaje } = await verificarConexionSupabase();
-        if (!conectado) {
-            mostrarToast('warning', 'Conectando...', 
-                'Verificando conexión con la base de datos');
-        }
-    }, 1000);
-    
-    console.log('Sistema de ganado inicializado con validaciones mejoradas');
-});
-
-function configurarValidacionTiempoReal() {
-    const idVaca = document.getElementById('v_id');
-    const idToro = document.getElementById('t_id');
-    const idTernero = document.getElementById('te_id');
-    const padreInput = document.getElementById('te_padre');
-    const madreInput = document.getElementById('te_madre');
-    
-    if (idVaca) idVaca.addEventListener('input', debounce(async () => await validarCampoId(idVaca, 'v_id'), 500));
-    if (idToro) idToro.addEventListener('input', debounce(async () => await validarCampoId(idToro, 't_id'), 500));
-    if (idTernero) idTernero.addEventListener('input', debounce(async () => await validarCampoId(idTernero, 'te_id'), 500));
-    if (padreInput) padreInput.addEventListener('input', debounce(async () => await validarPadreMadreCampo(padreInput, 'Padre'), 500));
-    if (madreInput) madreInput.addEventListener('input', debounce(async () => await validarPadreMadreCampo(madreInput, 'Madre'), 500));
 }
 
 function debounce(func, wait) {
@@ -649,7 +623,7 @@ function limpiarErrores() {
     });
 }
 
-// ================= FUNCIONES DE GUARDADO MEJORADAS =================
+// ================= FUNCIONES DE GUARDADO =================
 async function guardarVaca() {
     const btnGuardar = document.querySelector('#form-vaca .btn-primary');
     
@@ -789,6 +763,7 @@ async function guardarVaca() {
         }
     }
 }
+
 async function guardarToro() {
     limpiarErrores();
     if (!await validarCamposToro()) return;
@@ -1035,23 +1010,6 @@ function ocultarFormularios() {
     });
 }
 
-function mostrarConfirmacion(mensaje) {
-    cerrarAdvertencia();
-    cerrarError();
-    document.getElementById('confirmation-text').textContent = mensaje;
-    document.getElementById('confirmation-message').classList.remove('hidden');
-    
-    setTimeout(() => {
-        const confirmacion = document.getElementById('confirmation-message');
-        if (confirmacion && !confirmacion.classList.contains('hidden')) cerrarConfirmacion();
-    }, 3000);
-}
-
-function cerrarConfirmacion() {
-    document.getElementById('confirmation-message').classList.add('hidden');
-    if (document.getElementById('tab-registro').classList.contains('active')) ocultarFormularios();
-}
-
 // ================= FUNCIONES DE LIMPIEZA =================
 function limpiarFormularioVaca() {
     ['v_id', 'v_raza', 'v_nombre', 'v_edad', 'v_partos', 'v_obs'].forEach(id => {
@@ -1090,6 +1048,33 @@ function limpiarFormularioTernero() {
     if (btnCancelar) btnCancelar.remove();
 }
 
+function limpiarTodosLosFormularios() {
+    console.log('Limpiando todos los formularios');
+    document.getElementById('v_id').disabled = false;
+    document.getElementById('t_id').disabled = false;
+    document.getElementById('te_id').disabled = false;
+    
+    document.getElementById('v_id').value = '';
+    document.getElementById('v_raza').value = '';
+    document.getElementById('v_nombre').value = '';
+    document.getElementById('v_edad').value = '';
+    document.getElementById('v_partos').value = '';
+    document.getElementById('v_obs').value = '';
+    
+    document.getElementById('t_id').value = '';
+    document.getElementById('t_raza').value = '';
+    document.getElementById('t_nombre').value = '';
+    document.getElementById('t_edad').value = '';
+    
+    document.getElementById('te_id').value = '';
+    document.getElementById('te_raza').value = '';
+    document.getElementById('te_nombre').value = '';
+    document.getElementById('te_genero').value = 'Macho';
+    document.getElementById('te_fecha').value = '';
+    document.getElementById('te_padre').value = '';
+    document.getElementById('te_madre').value = '';
+}
+
 // ================= SISTEMA DE PESTAÑAS =================
 function cambiarTab(tabId) {
     console.log('Cambiando a pestaña:', tabId);
@@ -1105,7 +1090,7 @@ function cambiarTab(tabId) {
         restaurarBotonesOriginales();
     }
     else if (tabId === 'prenadas') cargarPrenadas();
-    else if (tabId === 'historial') cargarHistorialPartos(); // NUEVO
+    else if (tabId === 'historial') cargarHistorialPartos();
 }
 
 // ================= GESTIÓN DE ANIMALES REGISTRADOS =================
@@ -1367,6 +1352,23 @@ function cerrarModal() {
     document.getElementById('modal-body').innerHTML = '';
 }
 
+function cerrarTodosLosModales() {
+    const modales = [
+        'animal-detail-modal',
+        'modal-prenada',
+        'prenada-detail-modal',
+        'registro-parto-modal',
+        'error-message',
+        'warning-message',
+        'confirmation-message'
+    ];
+    
+    modales.forEach(modalId => {
+        const modal = document.getElementById(modalId);
+        if (modal) modal.classList.add('hidden');
+    });
+}
+
 // ================= FUNCIONES DE EDICIÓN Y ELIMINACIÓN =================
 async function eliminarAnimal(id, nombre) {
     const nombreEscapado = nombre.replace(/'/g, "\\'").replace(/"/g, '\\"');
@@ -1599,33 +1601,6 @@ function capitalizeFirstLetter(string) {
     return string.charAt(0).toUpperCase() + string.slice(1);
 }
 
-function limpiarTodosLosFormularios() {
-    console.log('Limpiando todos los formularios');
-    document.getElementById('v_id').disabled = false;
-    document.getElementById('t_id').disabled = false;
-    document.getElementById('te_id').disabled = false;
-    
-    document.getElementById('v_id').value = '';
-    document.getElementById('v_raza').value = '';
-    document.getElementById('v_nombre').value = '';
-    document.getElementById('v_edad').value = '';
-    document.getElementById('v_partos').value = '';
-    document.getElementById('v_obs').value = '';
-    
-    document.getElementById('t_id').value = '';
-    document.getElementById('t_raza').value = '';
-    document.getElementById('t_nombre').value = '';
-    document.getElementById('t_edad').value = '';
-    
-    document.getElementById('te_id').value = '';
-    document.getElementById('te_raza').value = '';
-    document.getElementById('te_nombre').value = '';
-    document.getElementById('te_genero').value = 'Macho';
-    document.getElementById('te_fecha').value = '';
-    document.getElementById('te_padre').value = '';
-    document.getElementById('te_madre').value = '';
-}
-
 function cancelarEdicion() {
     console.log('Cancelando edición');
     document.querySelectorAll('.animal-form').forEach(form => form.classList.remove('editing'));
@@ -1851,7 +1826,6 @@ function exportarDatos() {
 }
 
 // ================= SISTEMA DE PRENADAS =================
-// Función para mostrar formulario de prenada (CORREGIDA)
 async function mostrarFormularioPrenada() {
     console.log("Mostrando formulario de prenada...");
     const modal = document.getElementById('modal-prenada');
@@ -1919,7 +1893,6 @@ async function mostrarFormularioPrenada() {
     }
 }
 
-// Función para calcular fecha estimada de parto (CORREGIDA)
 function calcularFechaPartoPrenada(fechaMonta) {
     if (!fechaMonta) return;
     
@@ -1957,7 +1930,6 @@ function calcularFechaPartoPrenada(fechaMonta) {
     }
 }
 
-// Cargar toros para prenada (CORREGIDA)
 async function cargarTorosParaPrenada() {
     try {
         const { data: toros, error } = await supabaseClient
@@ -1987,7 +1959,6 @@ async function cargarTorosParaPrenada() {
     }
 }
 
-// Validar formulario de prenada (CORREGIDA)
 function validarFormularioPrenada() {
     const vacaId = document.getElementById('p_vaca').value;
     const fechaPrenada = document.getElementById('p_fecha').value;
@@ -2055,7 +2026,6 @@ function validarFormularioPrenada() {
     };
 }
 
-// Registrar nueva prenada (FUNCIÓN PRINCIPAL CORREGIDA)
 async function registrarPrenada() {
     console.log("Iniciando registro de prenada...");
     
@@ -2156,7 +2126,6 @@ async function registrarPrenada() {
     }
 }
 
-// Función auxiliar para formatear fechas
 function formatearFecha(fechaISO) {
     if (!fechaISO) return 'N/A';
     try {
@@ -2171,7 +2140,6 @@ function formatearFecha(fechaISO) {
     }
 }
 
-// Cargar prenadas (VERSIÓN SIMPLIFICADA Y FUNCIONAL)
 async function cargarPrenadas() {
     const tbody = document.getElementById('prenadas-table-body');
     
@@ -2284,7 +2252,6 @@ async function cargarPrenadas() {
     }
 }
 
-// Actualizar estadísticas de prenadas
 function actualizarEstadisticasPrenadas(prenadas) {
     if (!prenadas || prenadas.length === 0) {
         document.getElementById('stat-prenadas-total').textContent = '0';
@@ -2315,7 +2282,6 @@ function actualizarEstadisticasPrenadas(prenadas) {
     document.getElementById('stat-prenadas-retrasadas').textContent = retrasadas;
 }
 
-// Función para cerrar modal de prenada (CORREGIDA)
 function cerrarModalPrenada() {
     const modal = document.getElementById('modal-prenada');
     if (modal) {
@@ -2336,9 +2302,7 @@ function cerrarModalPrenada() {
     }
 }
 
-// ================= FUNCIONES FALTANTES DEL SISTEMA DE PREÑEZ =================
-
-// Función para sugerir IDs consecutivos
+// ================= FUNCIONES DE PRENADAS =================
 async function sugerirIdsConsecutivos(prenadaId) {
     try {
         // Obtener el último ID de ternero registrado
@@ -2368,8 +2332,6 @@ async function sugerirIdsConsecutivos(prenadaId) {
     }
 }
 
-
-// Función para marcar parto (completamente implementada)
 async function marcarParto(prenadaId) {
     console.log("Marcando parto para prenada ID:", prenadaId);
     
@@ -2423,7 +2385,6 @@ async function marcarParto(prenadaId) {
     }
 }
 
-// Función para cerrar modal de parto
 function cerrarModalParto() {
     document.getElementById('registro-parto-modal').classList.add('hidden');
     document.getElementById('parto-prenada-id').value = '';
@@ -2434,7 +2395,6 @@ function cerrarModalParto() {
     formularios.forEach(form => form.remove());
 }
 
-// Función para pre-cargar datos de la vaca en los terneros
 function precargarDatosVaca(prenada) {
     if (!prenada.vacas) return;
     
@@ -2449,7 +2409,6 @@ function precargarDatosVaca(prenada) {
     }
 }
 
-// Función para confirmar registro de parto (completamente implementada)
 async function confirmarRegistroParto() {
     const prenadaId = document.getElementById('parto-prenada-id').value;
     const fechaParto = document.getElementById('parto-fecha').value;
@@ -2620,7 +2579,7 @@ async function confirmarRegistroParto() {
         }
     }
 }
-// Función para cancelar prenada (completamente implementada)
+
 async function cancelarPrenada(prenadaId, nombreVaca) {
     mostrarAdvertencia(
         'Cancelar Prenada',
@@ -2656,7 +2615,6 @@ async function cancelarPrenada(prenadaId, nombreVaca) {
     );
 }
 
-// Función para ver detalles de prenada (mejorada)
 async function verDetallesPrenada(prenadaId) {
     try {
         mostrarLoading('Cargando detalles de la prenada...');
@@ -2825,7 +2783,6 @@ async function verDetallesPrenada(prenadaId) {
     }
 }
 
-// Función para cargar historial de prenadas
 async function cargarHistorialPrenadas() {
     try {
         mostrarLoading('Cargando historial de prenadas...');
@@ -2853,7 +2810,6 @@ async function cargarHistorialPrenadas() {
     }
 }
 
-// Función para generar reporte de prenadas
 async function generarReportePrenadas() {
     try {
         mostrarLoading('Generando reporte...');
@@ -2916,45 +2872,7 @@ async function generarReportePrenadas() {
     }
 }
 
-// Función auxiliar para formatear fechas (ya existe, pero la mejoramos)
-function formatearFecha(fechaISO) {
-    if (!fechaISO) return 'N/A';
-    try {
-        const fecha = new Date(fechaISO);
-        // Ajustar por zona horaria
-        const fechaAjustada = new Date(fecha.getTime() + fecha.getTimezoneOffset() * 60000);
-        return fechaAjustada.toLocaleDateString('es-ES', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric'
-        });
-    } catch (error) {
-        console.warn('Error formateando fecha:', fechaISO, error);
-        return 'Fecha inválida';
-    }
-}
-
-// Función para cerrar todos los modales
-function cerrarTodosLosModales() {
-    const modales = [
-        'animal-detail-modal',
-        'modal-prenada',
-        'prenada-detail-modal',
-        'registro-parto-modal',
-        'error-message',
-        'warning-message',
-        'confirmation-message'
-    ];
-    
-    modales.forEach(modalId => {
-        const modal = document.getElementById(modalId);
-        if (modal) modal.classList.add('hidden');
-    });
-}
-
 // ================= FUNCIONES PARA REGISTRO MANUAL DE TERNEROS =================
-
-// Función para actualizar formularios de terneros según cantidad
 function actualizarFormulariosTerneros() {
     const totalTerneros = parseInt(document.getElementById('parto-total').value) || 1;
     const container = document.getElementById('terneros-container');
@@ -3010,7 +2928,6 @@ function actualizarFormulariosTerneros() {
     }
 }
 
-// Validar ID del ternero en tiempo real
 async function validarIdTernero(numero) {
     const idInput = document.getElementById(`te_id_${numero}`);
     const idValue = idInput.value.trim();
@@ -3056,7 +2973,6 @@ async function validarIdTernero(numero) {
     }
 }
 
-// Función para obtener datos de todos los terneros
 function obtenerDatosTerneros() {
     const totalTerneros = parseInt(document.getElementById('parto-total').value) || 1;
     const terneros = [];
@@ -3203,7 +3119,6 @@ async function verificarIntegridadDatos() {
     return problemas;
 }
 
-// Función para ejecutar verificaciones periódicas
 function iniciarVerificacionesPeriodicas() {
     // Verificar cada 5 minutos
     setInterval(async () => {
@@ -3221,14 +3136,6 @@ function iniciarVerificacionesPeriodicas() {
 }
 
 // ================= SISTEMA DE HISTORIAL DE PARTOS =================
-
-// Variables para el historial
-let historialPartos = [];
-let historialFiltrado = [];
-let paginaHistorialActual = 1;
-const itemsPorPaginaHistorial = 10;
-
-// Cargar historial de partos
 async function cargarHistorialPartos() {
     console.log("Cargando historial de partos...");
     mostrarLoading('Cargando historial de partos...');
@@ -3302,7 +3209,6 @@ async function cargarHistorialPartos() {
     }
 }
 
-// Actualizar estadísticas del historial
 function actualizarEstadisticasHistorial() {
     if (historialPartos.length === 0) {
         document.getElementById('historial-total').textContent = '0';
@@ -3328,7 +3234,6 @@ function actualizarEstadisticasHistorial() {
     document.getElementById('historial-count').textContent = `${totalPartos} partos registrados`;
 }
 
-// Renderizar tabla de historial
 function renderizarTablaHistorial() {
     const tbody = document.getElementById('historial-table-body');
     
@@ -3430,7 +3335,6 @@ function renderizarTablaHistorial() {
     actualizarPaginacionHistorial();
 }
 
-// Filtrar historial
 function filtrarHistorial() {
     const busqueda = document.getElementById('historial-search').value.toLowerCase();
     const añoFiltro = document.getElementById('historial-fecha').value;
@@ -3482,7 +3386,6 @@ function filtrarHistorial() {
     renderizarTablaHistorial();
 }
 
-// Resetear filtros del historial
 function resetFiltrosHistorial() {
     document.getElementById('historial-search').value = '';
     document.getElementById('historial-fecha').value = 'all';
@@ -3494,7 +3397,6 @@ function resetFiltrosHistorial() {
     renderizarTablaHistorial();
 }
 
-// Actualizar paginación del historial
 function actualizarPaginacionHistorial() {
     const totalPaginas = Math.ceil(historialFiltrado.length / itemsPorPaginaHistorial);
     const prevButton = document.getElementById('prev-page-historial');
@@ -3508,7 +3410,6 @@ function actualizarPaginacionHistorial() {
     }
 }
 
-// Cambiar página del historial
 function cambiarPaginaHistorial(direccion) {
     const totalPaginas = Math.ceil(historialFiltrado.length / itemsPorPaginaHistorial);
     const nuevaPagina = paginaHistorialActual + direccion;
@@ -3519,7 +3420,6 @@ function cambiarPaginaHistorial(direccion) {
     }
 }
 
-// Ver detalle completo de un parto
 async function verDetalleParto(partoId) {
     try {
         mostrarLoading('Cargando detalles del parto...');
@@ -3728,7 +3628,6 @@ async function verDetalleParto(partoId) {
     }
 }
 
-// Ver terneros de un parto específico
 async function verTernerosParto(partoId) {
     try {
         mostrarLoading('Buscando terneros...');
@@ -3777,7 +3676,6 @@ async function verTernerosParto(partoId) {
     }
 }
 
-// Generar gráficos del historial
 function generarGraficosHistorial() {
     // Destruir gráficos existentes si hay
     if (charts.historialMensual) charts.historialMensual.destroy();
@@ -3880,7 +3778,101 @@ function generarGraficosHistorial() {
     }
 }
 
-    // ================= MANEJO DE ERRORES GLOBAL =================
+async function generarReporteHistorial() {
+    if (historialPartos.length === 0) {
+        mostrarAdvertencia('Sin Datos', 'No hay partos registrados en el historial para exportar.');
+        return;
+    }
+    
+    try {
+        mostrarLoading('Generando reporte del historial...');
+        
+        // Preparar datos para el CSV
+        const headers = [
+            'ID Parto', 'Fecha Parto', 'Vaca ID', 'Nombre Vaca', 'Raza Vaca',
+            'Toro ID', 'Nombre Toro', 'Raza Toro', 'Fecha Monta', 
+            'Duración Gestación (días)', 'Terneros Vivos', 'Terneros Muertos',
+            'Total Terneros', 'Estado', 'Observaciones', 'Observaciones Parto'
+        ];
+        
+        const csvData = historialPartos.map(parto => {
+            const vaca = parto.vacas || {};
+            const toro = parto.toros || {};
+            
+            return [
+                parto.id,
+                formatearFecha(parto.fecha_parto),
+                parto.vaca_id,
+                vaca.nombre || '',
+                vaca.raza || '',
+                toro.id || '',
+                toro.nombre || '',
+                toro.raza || '',
+                formatearFecha(parto.fecha_prenada),
+                parto.duracion_gestacion || '',
+                parto.terneros_vivos || 0,
+                parto.terneros_muertos || 0,
+                (parto.terneros_vivos || 0) + (parto.terneros_muertos || 0),
+                parto.estado,
+                parto.observaciones ? `"${parto.observaciones.replace(/"/g, '""')}"` : '',
+                parto.observaciones_parto ? `"${parto.observaciones_parto.replace(/"/g, '""')}"` : ''
+            ];
+        });
+        
+        const csvContent = [headers.join(','), ...csvData.map(row => row.join(','))].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        
+        const fechaActual = new Date().toISOString().split('T')[0];
+        link.setAttribute('href', url);
+        link.setAttribute('download', `historial_partos_${fechaActual}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        ocultarLoading();
+        mostrarConfirmacion('Reporte del historial generado exitosamente');
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error generando reporte:', error);
+        mostrarError('Error', 'No se pudo generar el reporte del historial', error.message);
+    }
+}
+
+function actualizarFiltroAnios() {
+    const selectAnio = document.getElementById('historial-fecha');
+    
+    // Obtener años únicos de los partos
+    const aniosUnicos = new Set();
+    historialPartos.forEach(parto => {
+        if (parto.fecha_parto) {
+            const anio = new Date(parto.fecha_parto).getFullYear();
+            aniosUnicos.add(anio);
+        }
+    });
+    
+    // Ordenar años descendente
+    const aniosOrdenados = Array.from(aniosUnicos).sort((a, b) => b - a);
+    
+    // Limpiar opciones excepto "Todos los años"
+    const opcionesActuales = selectAnio.querySelectorAll('option');
+    opcionesActuales.forEach((opcion, index) => {
+        if (index > 0) opcion.remove();
+    });
+    
+    // Agregar años encontrados
+    aniosOrdenados.forEach(anio => {
+        const option = document.createElement('option');
+        option.value = anio;
+        option.textContent = anio;
+        selectAnio.appendChild(option);
+    });
+}
+
+// ================= MANEJO DE ERRORES GLOBAL =================
 window.addEventListener('error', function(event) {
     console.error('Error global capturado:', event.error);
     
@@ -3959,7 +3951,6 @@ function crearContenedorToasts() {
     return container;
 }
 
-// Proteger contra múltiples clics
 function protegerContraClicsMultiples(elemento, tiempoMs = 2000) {
     if (elemento.disabled) return false;
     
@@ -3975,6 +3966,913 @@ function protegerContraClicsMultiples(elemento, tiempoMs = 2000) {
     }, tiempoMs);
     
     return true;
+}
+
+// ================= SISTEMA DE VACUNAS SIMPLIFICADO =================
+
+// Variables globales para vacunas
+let vacunasCargadas = [];
+let vacunasFiltradas = [];
+let paginaVacunasActual = 1;
+const itemsPorPaginaVacunas = 10;
+let vacunaEditando = null;
+
+// Configurar la pestaña de vacunas
+function configurarPestanaVacunas() {
+    const tabVacunas = document.getElementById('tab-vacunas');
+    if (tabVacunas) {
+        tabVacunas.addEventListener('click', function() {
+            setTimeout(() => {
+                if (document.getElementById('tab-content-vacunas').classList.contains('active')) {
+                    cargarVacunas();
+                }
+            }, 100);
+        });
+    }
+}
+
+// Mostrar formulario de vacuna
+async function mostrarFormularioVacuna() {
+    console.log("Mostrando formulario de vacuna...");
+    const modal = document.getElementById('modal-vacuna');
+    
+    if (!modal) {
+        mostrarError("Error", "No se encontró el modal de vacunas");
+        return;
+    }
+    
+    mostrarLoading("Cargando animales...");
+    
+    try {
+        // Cargar animales desde Supabase
+        const { data: animales, error } = await supabaseClient
+            .from('animales')
+            .select(`
+                id,
+                tipo,
+                vacas (nombre, raza),
+                toros (nombre, raza),
+                terneros (nombre, raza)
+            `)
+            .order('id');
+        
+        if (error) throw error;
+        
+        // Limpiar y llenar el select de animales
+        const selectAnimal = document.getElementById('vac_animal');
+        if (!selectAnimal) {
+            throw new Error("No se encontró el select de animales");
+        }
+        
+        selectAnimal.innerHTML = '<option value="">Selecciona un animal...</option>';
+        
+        if (animales && animales.length > 0) {
+            animales.forEach(animal => {
+                let nombre = 'Sin nombre';
+                let raza = 'Sin raza';
+                
+                // Obtener nombre y raza según el tipo
+                switch (animal.tipo) {
+                    case 'Vaca':
+                        nombre = animal.vacas?.nombre || 'Sin nombre';
+                        raza = animal.vacas?.raza || 'Sin raza';
+                        break;
+                    case 'Toro':
+                        nombre = animal.toros?.nombre || 'Sin nombre';
+                        raza = animal.toros?.raza || 'Sin raza';
+                        break;
+                    case 'Ternero':
+                        nombre = animal.terneros?.nombre || 'Sin nombre';
+                        raza = animal.terneros?.raza || 'Sin raza';
+                        break;
+                }
+                
+                const option = document.createElement('option');
+                option.value = animal.id;
+                option.textContent = `#${animal.id} - ${nombre} (${raza}) - ${animal.tipo}`;
+                option.dataset.tipo = animal.tipo;
+                option.dataset.nombre = nombre;
+                option.dataset.raza = raza;
+                selectAnimal.appendChild(option);
+            });
+        } else {
+            selectAnimal.innerHTML = '<option value="">No hay animales registrados</option>';
+        }
+        
+        // Configurar fecha actual por defecto
+        const hoy = new Date().toISOString().split('T')[0];
+        const fechaInput = document.getElementById('vac_fecha');
+        if (fechaInput) {
+            fechaInput.value = hoy;
+            fechaInput.max = hoy; // No permitir fechas futuras
+            fechaInput.min = '2000-01-01';
+        }
+        
+        // Mostrar modal
+        modal.classList.remove('hidden');
+        ocultarLoading();
+        
+        console.log("Formulario de vacuna cargado exitosamente");
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error("Error cargando formulario de vacuna:", error);
+        mostrarError("Error al cargar el formulario", error.message);
+    }
+}
+
+// Cargar información del animal seleccionado
+function cargarInfoAnimal() {
+    const selectAnimal = document.getElementById('vac_animal');
+    const animalId = selectAnimal.value;
+    const preview = document.getElementById('animal-info-preview');
+    
+    if (!animalId) {
+        preview.innerHTML = '<p>Selecciona un animal para ver sus detalles</p>';
+        return;
+    }
+    
+    const option = selectAnimal.options[selectAnimal.selectedIndex];
+    const tipo = option.dataset.tipo;
+    const nombre = option.dataset.nombre;
+    const raza = option.dataset.raza;
+    
+    preview.innerHTML = `
+        <div class="animal-info">
+            <div class="info-item">
+                <strong>ID:</strong> #${animalId}
+            </div>
+            <div class="info-item">
+                <strong>Tipo:</strong> ${tipo}
+            </div>
+            <div class="info-item">
+                <strong>Nombre:</strong> ${nombre}
+            </div>
+            <div class="info-item">
+                <strong>Raza:</strong> ${raza}
+            </div>
+        </div>
+    `;
+}
+
+// Validar formulario de vacuna
+function validarFormularioVacuna() {
+    const animalId = document.getElementById('vac_animal').value;
+    const medicamento = document.getElementById('vac_medicamento').value.trim();
+    const cantidad = document.getElementById('vac_cantidad').value.trim();
+    const via = document.getElementById('vac_via').value;
+    const fecha = document.getElementById('vac_fecha').value;
+    
+    const errores = [];
+    
+    // Validar campos obligatorios
+    if (!animalId) {
+        errores.push('Debe seleccionar un animal');
+        document.getElementById('vac_animal').classList.add('error');
+    }
+    
+    if (!medicamento) {
+        errores.push('El medicamento es obligatorio');
+        document.getElementById('vac_medicamento').classList.add('error');
+    }
+    
+    if (!cantidad) {
+        errores.push('La cantidad es obligatoria');
+        document.getElementById('vac_cantidad').classList.add('error');
+    }
+    
+    if (!via) {
+        errores.push('La vía de administración es obligatoria');
+        document.getElementById('vac_via').classList.add('error');
+    }
+    
+    if (!fecha) {
+        errores.push('La fecha de aplicación es obligatoria');
+        document.getElementById('vac_fecha').classList.add('error');
+    }
+    
+    // Validar fecha
+    if (fecha) {
+        const fechaAplicacion = new Date(fecha);
+        const hoy = new Date();
+        hoy.setHours(0, 0, 0, 0);
+        
+        if (fechaAplicacion > hoy) {
+            errores.push('La fecha de aplicación no puede ser futura');
+            document.getElementById('vac_fecha').classList.add('error');
+        }
+    }
+    
+    if (errores.length > 0) {
+        mostrarAdvertencia(
+            'Validación de Vacuna',
+            'Por favor corrige los siguientes errores:',
+            errores.join('\n')
+        );
+        return null;
+    }
+    
+    // Recopilar datos
+    const datos = {
+        animal_id: parseInt(animalId),
+        medicamento: medicamento,
+        cantidad: cantidad,
+        via_administracion: via,
+        fecha_aplicacion: fecha,
+        observaciones: document.getElementById('vac_observaciones').value.trim() || null,
+        created_at: new Date().toISOString()
+    };
+    
+    return datos;
+}
+
+// Registrar vacuna en la base de datos
+async function registrarVacuna() {
+    console.log("Registrando vacuna...");
+    
+    // Validar formulario
+    const datos = validarFormularioVacuna();
+    if (!datos) {
+        return;
+    }
+    
+    try {
+        mostrarLoading('Guardando vacunación...');
+        
+        // Insertar en la base de datos
+        const { data, error } = await supabaseClient
+            .from('vacunas')
+            .insert([datos])
+            .select()
+            .single();
+        
+        if (error) {
+            console.error("Error de Supabase:", error);
+            
+            // Si la tabla no existe, mostramos instrucciones para crearla
+            if (error.message.includes('relation "vacunas" does not exist')) {
+                throw new Error(
+                    'La tabla "vacunas" no existe. Por favor créala en Supabase con:\n\n' +
+                    'CREATE TABLE vacunas (\n' +
+                    '  id SERIAL PRIMARY KEY,\n' +
+                    '  animal_id INTEGER REFERENCES animales(id),\n' +
+                    '  medicamento TEXT NOT NULL,\n' +
+                    '  cantidad TEXT NOT NULL,\n' +
+                    '  via_administracion TEXT NOT NULL,\n' +
+                    '  fecha_aplicacion DATE NOT NULL,\n' +
+                    '  observaciones TEXT,\n' +
+                    '  created_at TIMESTAMP DEFAULT NOW()\n' +
+                    ');'
+                );
+            }
+            throw error;
+        }
+        
+        ocultarLoading();
+        
+        // Mostrar confirmación
+        const animalNombre = document.getElementById('vac_animal').options[document.getElementById('vac_animal').selectedIndex].textContent.split(' - ')[1];
+        mostrarConfirmacion(`Vacunación registrada exitosamente para ${animalNombre}`);
+        
+        // Cerrar modal y limpiar formulario
+        cerrarModalVacuna();
+        
+        // Actualizar lista si estamos en la pestaña de vacunas
+        if (document.getElementById('tab-content-vacunas')?.classList.contains('active')) {
+            await cargarVacunas();
+        }
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error registrando vacuna:', error);
+        mostrarError('Error al Registrar', 'No se pudo guardar la vacunación', error.message);
+    }
+}
+
+// Cargar todas las vacunas
+async function cargarVacunas() {
+    console.log("Cargando vacunas...");
+    const tbody = document.getElementById('vacunas-table-body');
+    
+    if (!tbody) {
+        console.error("Elemento vacunas-table-body no encontrado");
+        return;
+    }
+    
+    mostrarLoading('Cargando registro de vacunas...');
+    
+    try {
+        // Obtener todas las vacunas con información del animal
+        const { data: vacunas, error } = await supabaseClient
+            .from('vacunas')
+            .select(`
+                *,
+                animales (
+                    id,
+                    tipo,
+                    vacas (nombre, raza),
+                    toros (nombre, raza),
+                    terneros (nombre, raza)
+                )
+            `)
+            .order('fecha_aplicacion', { ascending: false });
+        
+        if (error) {
+            // Si la tabla no existe, mostrar mensaje amigable
+            if (error.message.includes('relation "vacunas" does not exist')) {
+                tbody.innerHTML = `
+                    <tr><td colspan="8" class="no-data">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p>La tabla de vacunas no está configurada</p>
+                        <button class="btn-primary" onclick="crearTablaVacunas()">
+                            <i class="fas fa-database"></i> Configurar Base de Datos
+                        </button>
+                    </td></tr>
+                `;
+                ocultarLoading();
+                return;
+            }
+            throw error;
+        }
+        
+        // Procesar datos
+        vacunasCargadas = vacunas.map(vacuna => {
+            const animal = vacuna.animales || {};
+            let nombre = 'Sin nombre';
+            let raza = 'Sin raza';
+            
+            // Obtener nombre y raza según el tipo
+            if (animal.tipo === 'Vaca' && animal.vacas) {
+                nombre = animal.vacas.nombre || 'Sin nombre';
+                raza = animal.vacas.raza || 'Sin raza';
+            } else if (animal.tipo === 'Toro' && animal.toros) {
+                nombre = animal.toros.nombre || 'Sin nombre';
+                raza = animal.toros.raza || 'Sin raza';
+            } else if (animal.tipo === 'Ternero' && animal.terneros) {
+                nombre = animal.terneros.nombre || 'Sin nombre';
+                raza = animal.terneros.raza || 'Sin raza';
+            }
+            
+            return {
+                ...vacuna,
+                animal_nombre: nombre,
+                animal_raza: raza,
+                animal_tipo: animal.tipo,
+                fecha_formateada: formatearFecha(vacuna.fecha_aplicacion)
+            };
+        });
+        
+        vacunasFiltradas = [...vacunasCargadas];
+        
+        // Actualizar estadísticas
+        actualizarEstadisticasVacunas();
+        
+        // Renderizar tabla
+        renderizarTablaVacunas();
+        
+        // Generar gráficos
+        generarGraficosVacunas();
+        
+    } catch (error) {
+        console.error("Error cargando vacunas:", error);
+        tbody.innerHTML = `
+            <tr><td colspan="8" class="no-data error">
+                <i class="fas fa-exclamation-triangle"></i> Error cargando vacunas: ${error.message}
+            </td></tr>
+        `;
+        vacunasCargadas = [];
+        vacunasFiltradas = [];
+    } finally {
+        ocultarLoading();
+    }
+}
+
+// Actualizar estadísticas de vacunas
+function actualizarEstadisticasVacunas() {
+    if (vacunasCargadas.length === 0) {
+        document.getElementById('stat-vacunas-total').textContent = '0';
+        document.getElementById('stat-vacas-vacunadas').textContent = '0';
+        document.getElementById('stat-toros-vacunados').textContent = '0';
+        document.getElementById('stat-terneros-vacunados').textContent = '0';
+        return;
+    }
+    
+    const totalVacunas = vacunasCargadas.length;
+    const vacasVacunadas = vacunasCargadas.filter(v => v.animal_tipo === 'Vaca').length;
+    const torosVacunados = vacunasCargadas.filter(v => v.animal_tipo === 'Toro').length;
+    const ternerosVacunados = vacunasCargadas.filter(v => v.animal_tipo === 'Ternero').length;
+    
+    document.getElementById('stat-vacunas-total').textContent = totalVacunas;
+    document.getElementById('stat-vacas-vacunadas').textContent = vacasVacunadas;
+    document.getElementById('stat-toros-vacunados').textContent = torosVacunados;
+    document.getElementById('stat-terneros-vacunados').textContent = ternerosVacunados;
+    
+    // Actualizar contador
+    document.getElementById('vacunas-count').textContent = `${totalVacunas} vacunaciones registradas`;
+}
+
+// Renderizar tabla de vacunas
+function renderizarTablaVacunas() {
+    const tbody = document.getElementById('vacunas-table-body');
+    
+    if (!tbody) return;
+    
+    if (vacunasFiltradas.length === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="8" class="no-data">
+                <i class="fas fa-search"></i> No se encontraron vacunaciones registradas
+            </td></tr>
+        `;
+        actualizarPaginacionVacunas();
+        return;
+    }
+    
+    const inicio = (paginaVacunasActual - 1) * itemsPorPaginaVacunas;
+    const fin = inicio + itemsPorPaginaVacunas;
+    const vacunasPagina = vacunasFiltradas.slice(inicio, fin);
+    
+    const filasHTML = vacunasPagina.map(vacuna => {
+        return `
+            <tr>
+                <td>
+                    <strong>${vacuna.fecha_formateada}</strong>
+                </td>
+                <td>
+                    <strong>#${vacuna.animal_id}</strong><br>
+                    ${vacuna.animal_nombre}<br>
+                    <small>${vacuna.animal_tipo}</small>
+                </td>
+                <td>${vacuna.animal_tipo}</td>
+                <td>
+                    <strong>${vacuna.medicamento}</strong>
+                </td>
+                <td>${vacuna.cantidad}</td>
+                <td>${vacuna.via_administracion}</td>
+                <td>${vacuna.observaciones || 'Ninguna'}</td>
+                <td>
+                    <div class="animal-actions">
+                        <button class="btn-action btn-view" onclick="verDetalleVacuna(${vacuna.id})" 
+                                title="Ver detalles">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn-action btn-delete" onclick="eliminarVacunaModal(${vacuna.id})" 
+                                title="Eliminar">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+    
+    tbody.innerHTML = filasHTML;
+    actualizarPaginacionVacunas();
+}
+
+// Filtrar vacunas
+function filtrarVacunas() {
+    const busqueda = document.getElementById('vacunas-search').value.toLowerCase();
+    const tipoFiltro = document.getElementById('vacunas-tipo-animal').value;
+    const orden = document.getElementById('vacunas-orden').value;
+    
+    let resultados = vacunasCargadas.filter(vacuna => {
+        // Búsqueda por animal, medicamento, etc.
+        const coincideBusqueda = 
+            vacuna.animal_id.toString().includes(busqueda) ||
+            vacuna.animal_nombre.toLowerCase().includes(busqueda) ||
+            vacuna.medicamento.toLowerCase().includes(busqueda) ||
+            vacuna.observaciones?.toLowerCase().includes(busqueda);
+        
+        // Filtro por tipo de animal
+        const coincideTipo = tipoFiltro === 'all' || vacuna.animal_tipo === tipoFiltro;
+        
+        return coincideBusqueda && coincideTipo;
+    });
+    
+    // Ordenar resultados
+    resultados.sort((a, b) => {
+        switch (orden) {
+            case 'fecha_desc':
+                return new Date(b.fecha_aplicacion) - new Date(a.fecha_aplicacion);
+            case 'fecha_asc':
+                return new Date(a.fecha_aplicacion) - new Date(b.fecha_aplicacion);
+            case 'animal':
+                return a.animal_nombre.localeCompare(b.animal_nombre);
+            default:
+                return 0;
+        }
+    });
+    
+    vacunasFiltradas = resultados;
+    paginaVacunasActual = 1;
+    renderizarTablaVacunas();
+}
+
+// Resetear filtros de vacunas
+function resetFiltrosVacunas() {
+    document.getElementById('vacunas-search').value = '';
+    document.getElementById('vacunas-tipo-animal').value = 'all';
+    document.getElementById('vacunas-orden').value = 'fecha_desc';
+    
+    vacunasFiltradas = [...vacunasCargadas];
+    paginaVacunasActual = 1;
+    renderizarTablaVacunas();
+}
+
+// Paginación para vacunas
+function actualizarPaginacionVacunas() {
+    const totalPaginas = Math.ceil(vacunasFiltradas.length / itemsPorPaginaVacunas);
+    const prevButton = document.getElementById('prev-page-vacunas');
+    const nextButton = document.getElementById('next-page-vacunas');
+    const pageInfo = document.getElementById('page-info-vacunas');
+    
+    if (prevButton && nextButton && pageInfo) {
+        prevButton.disabled = paginaVacunasActual === 1;
+        nextButton.disabled = paginaVacunasActual === totalPaginas || totalPaginas === 0;
+        pageInfo.textContent = `Página ${paginaVacunasActual} de ${totalPaginas}`;
+    }
+}
+
+function cambiarPaginaVacunas(direccion) {
+    const totalPaginas = Math.ceil(vacunasFiltradas.length / itemsPorPaginaVacunas);
+    const nuevaPagina = paginaVacunasActual + direccion;
+    
+    if (nuevaPagina >= 1 && nuevaPagina <= totalPaginas) {
+        paginaVacunasActual = nuevaPagina;
+        renderizarTablaVacunas();
+    }
+}
+
+// Cerrar modal de vacuna
+function cerrarModalVacuna() {
+    const modal = document.getElementById('modal-vacuna');
+    if (modal) {
+        modal.classList.add('hidden');
+        
+        // Limpiar formulario
+        const form = document.getElementById('form-vacuna');
+        if (form) {
+            form.reset();
+        }
+        
+        // Resetear información
+        const preview = document.getElementById('animal-info-preview');
+        if (preview) {
+            preview.innerHTML = '<p>Selecciona un animal para ver sus detalles</p>';
+        }
+    }
+}
+
+// Ver detalle de vacuna
+async function verDetalleVacuna(vacunaId) {
+    try {
+        mostrarLoading('Cargando detalles de la vacunación...');
+        
+        const { data: vacuna, error } = await supabaseClient
+            .from('vacunas')
+            .select(`
+                *,
+                animales (
+                    id,
+                    tipo,
+                    vacas (nombre, raza, edad_aproximada),
+                    toros (nombre, raza, edad_aproximada),
+                    terneros (nombre, raza, fecha_nacimiento)
+                )
+            `)
+            .eq('id', vacunaId)
+            .single();
+        
+        if (error) throw error;
+        
+        // Procesar datos del animal
+        const animal = vacuna.animales || {};
+        let nombre = 'Sin nombre';
+        let raza = 'Sin raza';
+        let infoAdicional = '';
+        
+        if (animal.tipo === 'Vaca' && animal.vacas) {
+            nombre = animal.vacas.nombre || 'Sin nombre';
+            raza = animal.vacas.raza || 'Sin raza';
+            infoAdicional = `Edad: ${animal.vacas.edad_aproximada || 'N/A'} años`;
+        } else if (animal.tipo === 'Toro' && animal.toros) {
+            nombre = animal.toros.nombre || 'Sin nombre';
+            raza = animal.toros.raza || 'Sin raza';
+            infoAdicional = `Edad: ${animal.toros.edad_aproximada || 'N/A'} años`;
+        } else if (animal.tipo === 'Ternero' && animal.terneros) {
+            nombre = animal.terneros.nombre || 'Sin nombre';
+            raza = animal.terneros.raza || 'Sin raza';
+            const fechaNacimiento = animal.terneros.fecha_nacimiento ? 
+                formatearFecha(animal.terneros.fecha_nacimiento) : 'N/A';
+            infoAdicional = `Nacimiento: ${fechaNacimiento}`;
+        }
+        
+        // Crear HTML de detalles
+        const detallesHTML = `
+            <div class="vacuna-detalles">
+                <div class="detalle-seccion">
+                    <h4><i class="fas fa-syringe"></i> Información de la Vacunación</h4>
+                    <div class="detalle-grid">
+                        <div class="detalle-item">
+                            <span class="detalle-label">Medicamento:</span>
+                            <span class="detalle-value"><strong>${vacuna.medicamento}</strong></span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Cantidad:</span>
+                            <span class="detalle-value">${vacuna.cantidad}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Vía:</span>
+                            <span class="detalle-value">${vacuna.via_administracion}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Fecha Aplicación:</span>
+                            <span class="detalle-value">${formatearFecha(vacuna.fecha_aplicacion)}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="detalle-seccion">
+                    <h4><i class="fas fa-cow"></i> Información del Animal</h4>
+                    <div class="detalle-grid">
+                        <div class="detalle-item">
+                            <span class="detalle-label">ID:</span>
+                            <span class="detalle-value">#${animal.id}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Nombre:</span>
+                            <span class="detalle-value">${nombre}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Tipo:</span>
+                            <span class="detalle-value">${animal.tipo}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Raza:</span>
+                            <span class="detalle-value">${raza}</span>
+                        </div>
+                        <div class="detalle-item">
+                            <span class="detalle-label">Información:</span>
+                            <span class="detalle-value">${infoAdicional}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                ${vacuna.observaciones ? `
+                <div class="detalle-seccion">
+                    <h4><i class="fas fa-sticky-note"></i> Observaciones</h4>
+                    <div style="padding: 10px; background: #f8f9fa; border-radius: 4px;">
+                        ${vacuna.observaciones}
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+        `;
+        
+        // Mostrar en modal
+        document.getElementById('vacuna-detail-body').innerHTML = detallesHTML;
+        document.getElementById('btn-eliminar-vacuna').onclick = () => eliminarVacunaModal(vacunaId, nombre);
+        document.getElementById('vacuna-detail-modal').classList.remove('hidden');
+        
+        ocultarLoading();
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error cargando detalles de vacuna:', error);
+        mostrarError('Error', 'No se pudieron cargar los detalles de la vacunación', error.message);
+    }
+}
+
+// Cerrar modal de detalle de vacuna
+function cerrarModalDetalleVacuna() {
+    document.getElementById('vacuna-detail-modal').classList.add('hidden');
+    document.getElementById('vacuna-detail-body').innerHTML = '';
+}
+
+// Eliminar vacuna (modal de confirmación)
+function eliminarVacunaModal(vacunaId, nombreAnimal = null) {
+    if (!nombreAnimal) {
+        nombreAnimal = 'esta vacunación';
+    }
+    
+    mostrarAdvertencia(
+        'Confirmar Eliminación',
+        `¿Estás seguro de eliminar el registro de vacunación?`,
+        `Esta acción no se puede deshacer. Se eliminará el registro de vacunación para ${nombreAnimal}.`,
+        async () => {
+            try {
+                mostrarLoading('Eliminando registro de vacunación...');
+                
+                const { error } = await supabaseClient
+                    .from('vacunas')
+                    .delete()
+                    .eq('id', vacunaId);
+                
+                if (error) throw error;
+                
+                cerrarModalDetalleVacuna();
+                ocultarLoading();
+                mostrarConfirmacion('Registro de vacunación eliminado correctamente');
+                
+                // Actualizar lista
+                await cargarVacunas();
+                
+            } catch (error) {
+                ocultarLoading();
+                console.error('Error eliminando vacuna:', error);
+                mostrarError('Error al Eliminar', 'No se pudo eliminar el registro de vacunación', error.message);
+            }
+        }
+    );
+}
+
+// Generar gráficos de vacunas
+function generarGraficosVacunas() {
+    // Destruir gráficos existentes
+    if (charts.vacunasMensuales) charts.vacunasMensuales.destroy();
+    if (charts.vacunasTipoAnimal) charts.vacunasTipoAnimal.destroy();
+    
+    // Gráfico de vacunas por mes
+    const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const vacunasMensuales = new Array(12).fill(0);
+    
+    vacunasCargadas.forEach(vacuna => {
+        if (vacuna.fecha_aplicacion) {
+            const fecha = new Date(vacuna.fecha_aplicacion);
+            const mes = fecha.getMonth();
+            vacunasMensuales[mes]++;
+        }
+    });
+    
+    const ctxMensual = document.getElementById('chart-vacunas-mensuales')?.getContext('2d');
+    if (ctxMensual) {
+        charts.vacunasMensuales = new Chart(ctxMensual, {
+            type: 'bar',
+            data: {
+                labels: meses,
+                datasets: [{
+                    label: 'Vacunaciones',
+                    data: vacunasMensuales,
+                    backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                    borderColor: '#36a2eb',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                }
+            }
+        });
+    }
+    
+    // Gráfico de distribución por tipo de animal
+    const tiposCount = {
+        'Vaca': vacunasCargadas.filter(v => v.animal_tipo === 'Vaca').length,
+        'Toro': vacunasCargadas.filter(v => v.animal_tipo === 'Toro').length,
+        'Ternero': vacunasCargadas.filter(v => v.animal_tipo === 'Ternero').length
+    };
+    
+    const ctxTipoAnimal = document.getElementById('chart-vacunas-tipo-animal')?.getContext('2d');
+    if (ctxTipoAnimal) {
+        charts.vacunasTipoAnimal = new Chart(ctxTipoAnimal, {
+            type: 'pie',
+            data: {
+                labels: ['Vacas', 'Toros', 'Terneros'],
+                datasets: [{
+                    data: [tiposCount.Vaca, tiposCount.Toro, tiposCount.Ternero],
+                    backgroundColor: [
+                        '#2e7d32', // Verde para vacas
+                        '#ff9800', // Naranja para toros
+                        '#2196f3'  // Azul para terneros
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label || '';
+                                const value = context.raw || 0;
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = Math.round((value / total) * 100);
+                                return `${label}: ${value} (${percentage}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+// Exportar vacunas a CSV
+function exportarVacunasCSV() {
+    if (vacunasCargadas.length === 0) {
+        mostrarAdvertencia('Sin Datos', 'No hay vacunaciones registradas para exportar.');
+        return;
+    }
+    
+    try {
+        mostrarLoading('Generando reporte de vacunaciones...');
+        
+        const headers = [
+            'ID Vacuna', 'ID Animal', 'Nombre Animal', 'Tipo Animal', 'Raza',
+            'Medicamento', 'Cantidad', 'Vía Administración', 'Fecha Aplicación',
+            'Observaciones', 'Fecha Registro'
+        ];
+        
+        const csvData = vacunasCargadas.map(vacuna => {
+            return [
+                vacuna.id,
+                vacuna.animal_id,
+                vacuna.animal_nombre,
+                vacuna.animal_tipo,
+                vacuna.animal_raza,
+                vacuna.medicamento,
+                vacuna.cantidad,
+                vacuna.via_administracion,
+                vacuna.fecha_aplicacion,
+                vacuna.observaciones || '',
+                vacuna.created_at ? new Date(vacuna.created_at).toLocaleDateString() : ''
+            ];
+        });
+        
+        const csvContent = [headers.join(','), ...csvData.map(row => row.join(','))].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        
+        const fechaActual = new Date().toISOString().split('T')[0];
+        link.setAttribute('href', url);
+        link.setAttribute('download', `vacunaciones_${fechaActual}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        ocultarLoading();
+        mostrarConfirmacion('Reporte de vacunaciones generado exitosamente');
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error generando reporte:', error);
+        mostrarError('Error', 'No se pudo generar el reporte de vacunaciones', error.message);
+    }
+}
+
+// Función para crear la tabla de vacunas si no existe
+async function crearTablaVacunas() {
+    mostrarLoading('Configurando base de datos...');
+    
+    try {
+        // Mostrar instrucciones
+        mostrarAdvertencia(
+            'Configuración de Base de Datos',
+            'La tabla de vacunas no existe en Supabase',
+            `Para crear la tabla, ejecuta este SQL en el editor de SQL de Supabase:
+
+CREATE TABLE vacunas (
+    id SERIAL PRIMARY KEY,
+    animal_id INTEGER REFERENCES animales(id),
+    medicamento TEXT NOT NULL,
+    cantidad TEXT NOT NULL,
+    via_administracion TEXT NOT NULL,
+    fecha_aplicacion DATE NOT NULL,
+    observaciones TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Luego recarga la página.`,
+            () => {
+                ocultarLoading();
+                window.open('https://app.supabase.com/project/kuipquqixbgphvsnnoku/editor', '_blank');
+            }
+        );
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error configurando tabla:', error);
+        mostrarError('Error', 'No se pudo configurar la base de datos', error.message);
+    }
 }
 
 // ================= VALIDACIÓN EN TIEMPO REAL MEJORADA =================
@@ -4135,162 +5033,25 @@ function mostrarEstadoCampo(formGroup, tipo, mensaje) {
     msgElement.innerHTML = `<i class="fas ${icono}"></i> ${mensaje}`;
     formGroup.appendChild(msgElement);
 }
-// Proteger contra múltiples clics
-function protegerContraClicsMultiples(elemento, tiempoMs = 2000) {
-    if (elemento.disabled) return false;
-    
-    elemento.disabled = true;
-    elemento.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Procesando...';
-    
-    setTimeout(() => {
-        elemento.disabled = false;
-        // Restaurar texto original basado en el tipo de botón
-        if (elemento.classList.contains('btn-primary')) {
-            elemento.innerHTML = '<i class="fas fa-save"></i> Guardar';
-        }
-    }, tiempoMs);
-    
-    return true;
-}
-    
-    // Gráfico de distribución por resultado
-    const partosExitosos = historialPartos.filter(p => p.estado === 'Finalizada').length;
-    const partosCancelados = historialPartos.filter(p => p.estado === 'Cancelada').length;
-    
-    const ctxResultados = document.getElementById('chart-resultados-partos')?.getContext('2d');
-    if (ctxResultados) {
-        charts.resultadosPartos = new Chart(ctxResultados, {
-            type: 'pie',
-            data: {
-                labels: ['Exitosos', 'Cancelados'],
-                datasets: [{
-                    data: [partosExitosos, partosCancelados],
-                    backgroundColor: ['#4caf50', '#f44336'],
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'bottom'
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                const label = context.label || '';
-                                const value = context.raw || 0;
-                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = Math.round((value / total) * 100);
-                                return `${label}: ${value} (${percentage}%)`;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-    }
 
-// Generar reporte del historial
-async function generarReporteHistorial() {
-    if (historialPartos.length === 0) {
-        mostrarAdvertencia('Sin Datos', 'No hay partos registrados en el historial para exportar.');
-        return;
-    }
-    
-    try {
-        mostrarLoading('Generando reporte del historial...');
-        
-        // Preparar datos para el CSV
-        const headers = [
-            'ID Parto', 'Fecha Parto', 'Vaca ID', 'Nombre Vaca', 'Raza Vaca',
-            'Toro ID', 'Nombre Toro', 'Raza Toro', 'Fecha Monta', 
-            'Duración Gestación (días)', 'Terneros Vivos', 'Terneros Muertos',
-            'Total Terneros', 'Estado', 'Observaciones', 'Observaciones Parto'
-        ];
-        
-        const csvData = historialPartos.map(parto => {
-            const vaca = parto.vacas || {};
-            const toro = parto.toros || {};
-            
-            return [
-                parto.id,
-                formatearFecha(parto.fecha_parto),
-                parto.vaca_id,
-                vaca.nombre || '',
-                vaca.raza || '',
-                toro.id || '',
-                toro.nombre || '',
-                toro.raza || '',
-                formatearFecha(parto.fecha_prenada),
-                parto.duracion_gestacion || '',
-                parto.terneros_vivos || 0,
-                parto.terneros_muertos || 0,
-                (parto.terneros_vivos || 0) + (parto.terneros_muertos || 0),
-                parto.estado,
-                parto.observaciones ? `"${parto.observaciones.replace(/"/g, '""')}"` : '',
-                parto.observaciones_parto ? `"${parto.observaciones_parto.replace(/"/g, '""')}"` : ''
-            ];
-        });
-        
-        const csvContent = [headers.join(','), ...csvData.map(row => row.join(','))].join('\n');
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        
-        const fechaActual = new Date().toISOString().split('T')[0];
-        link.setAttribute('href', url);
-        link.setAttribute('download', `historial_partos_${fechaActual}.csv`);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
-        ocultarLoading();
-        mostrarConfirmacion('Reporte del historial generado exitosamente');
-        
-    } catch (error) {
-        ocultarLoading();
-        console.error('Error generando reporte:', error);
-        mostrarError('Error', 'No se pudo generar el reporte del historial', error.message);
-    }
-}
-
-// Actualizar años en el filtro
-function actualizarFiltroAnios() {
-    const selectAnio = document.getElementById('historial-fecha');
-    
-    // Obtener años únicos de los partos
-    const aniosUnicos = new Set();
-    historialPartos.forEach(parto => {
-        if (parto.fecha_parto) {
-            const anio = new Date(parto.fecha_parto).getFullYear();
-            aniosUnicos.add(anio);
-        }
-    });
-    
-    // Ordenar años descendente
-    const aniosOrdenados = Array.from(aniosUnicos).sort((a, b) => b - a);
-    
-    // Limpiar opciones excepto "Todos los años"
-    const opcionesActuales = selectAnio.querySelectorAll('option');
-    opcionesActuales.forEach((opcion, index) => {
-        if (index > 0) opcion.remove();
-    });
-    
-    // Agregar años encontrados
-    aniosOrdenados.forEach(anio => {
-        const option = document.createElement('option');
-        option.value = anio;
-        option.textContent = anio;
-        selectAnio.appendChild(option);
-    });
-}
-
-// Inicialización de eventos para prenadas
+// ================= CONFIGURACIÓN INICIAL =================
 document.addEventListener('DOMContentLoaded', function() {
-    // Configurar fecha mínima/máxima para fecha de prenada
+    document.getElementById('current-year').textContent = new Date().getFullYear();
+    
+    // Configurar límites de fecha
+    const fechaInputs = document.querySelectorAll('input[type="date"]');
+    const today = new Date().toISOString().split('T')[0];
+    
+    fechaInputs.forEach(input => {
+        input.max = today;
+        input.min = '2000-01-01';
+    });
+    
+    // Configurar validaciones
+    configurarValidacionTiempoReal();
+    configurarValidacionTiempoRealMejorada();
+    
+    // Configurar eventos para prenadas
     const fechaPrenadaInput = document.getElementById('p_fecha');
     if (fechaPrenadaInput) {
         const hoy = new Date().toISOString().split('T')[0];
@@ -4302,7 +5063,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const tabPrenadas = document.getElementById('tab-prenadas');
     if (tabPrenadas) {
         tabPrenadas.addEventListener('click', function() {
-            // Pequeño delay para asegurar que la pestaña esté activa
             setTimeout(() => {
                 if (document.getElementById('tab-content-prenadas').classList.contains('active')) {
                     cargarPrenadas();
@@ -4311,9 +5071,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    console.log("Sistema de prenadas inicializado correctamente");
-
-    // Inicializar filtro de años cuando se carga el historial
+    // Evento para pestaña de historial
     const tabHistorial = document.getElementById('tab-historial');
     if (tabHistorial) {
         tabHistorial.addEventListener('click', function() {
@@ -4325,6 +5083,33 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    console.log("Sistema de historial de partos listo");
+    // Verificar conexión inicial
+    setTimeout(async () => {
+        const { conectado, mensaje } = await verificarConexionSupabase();
+        if (!conectado) {
+            mostrarToast('warning', 'Conectando...', 
+                'Verificando conexión con la base de datos');
+        }
+    }, 1000);
+    
+    // Iniciar verificaciones periódicas
+    iniciarVerificacionesPeriodicas();
+    
+    console.log('Sistema de ganado inicializado correctamente');
+    console.log('Sistema de prenadas inicializado correctamente');
+    console.log('Sistema de historial de partos listo');
 });
 
+function configurarValidacionTiempoReal() {
+    const idVaca = document.getElementById('v_id');
+    const idToro = document.getElementById('t_id');
+    const idTernero = document.getElementById('te_id');
+    const padreInput = document.getElementById('te_padre');
+    const madreInput = document.getElementById('te_madre');
+    
+    if (idVaca) idVaca.addEventListener('input', debounce(async () => await validarCampoId(idVaca, 'v_id'), 500));
+    if (idToro) idToro.addEventListener('input', debounce(async () => await validarCampoId(idToro, 't_id'), 500));
+    if (idTernero) idTernero.addEventListener('input', debounce(async () => await validarCampoId(idTernero, 'te_id'), 500));
+    if (padreInput) padreInput.addEventListener('input', debounce(async () => await validarPadreMadreCampo(padreInput, 'Padre'), 500));
+    if (madreInput) madreInput.addEventListener('input', debounce(async () => await validarPadreMadreCampo(madreInput, 'Madre'), 500));
+}

@@ -1,0 +1,197 @@
+/* ================= TABLES CONTAINER ================= */
+.table-container {
+    background: white;
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: 0 3px 15px var(--shadow);
+    margin-bottom: 30px;
+}
+
+.table-header {
+    padding: 20px;
+    background: var(--light-bg);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.table-header h3 {
+    font-family: 'Poppins', sans-serif;
+    font-size: 1.2rem;
+    color: var(--primary-dark);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.table-actions {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+#table-count {
+    font-size: 0.9rem;
+    color: var(--text-light);
+}
+
+.table-wrapper {
+    overflow-x: auto;
+}
+
+/* ================= BASE TABLE STYLES ================= */
+#animals-table,
+#prenadas-table,
+#historial-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+#animals-table thead,
+#prenadas-table thead,
+#historial-table thead {
+    background: var(--primary);
+    color: white;
+}
+
+#animals-table th,
+#prenadas-table th,
+#historial-table th {
+    padding: 15px;
+    text-align: left;
+    font-weight: 500;
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
+#animals-table tbody tr,
+#prenadas-table tbody tr,
+#historial-table tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.3s ease;
+}
+
+#animals-table tbody tr:hover,
+#prenadas-table tbody tr:hover,
+#historial-table tbody tr:hover {
+    background: var(--light-bg);
+}
+
+#animals-table td,
+#prenadas-table td,
+#historial-table td {
+    padding: 15px;
+    color: var(--text);
+    font-size: 0.9rem;
+}
+
+/* ================= ANIMAL TYPE BADGES ================= */
+.animal-type {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.animal-type.vaca {
+    background: #e8f5e9;
+    color: var(--primary);
+}
+
+.animal-type.toro {
+    background: #fff3e0;
+    color: var(--secondary-dark);
+}
+
+.animal-type.ternero {
+    background: #e3f2fd;
+    color: var(--accent);
+}
+
+/* ================= TABLE ACTIONS ================= */
+.animal-actions,
+.prenada-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-action:disabled:hover {
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* ================= NO DATA ================= */
+.no-data {
+    text-align: center;
+    padding: 40px !important;
+    color: var(--text-light);
+}
+
+.no-data i {
+    margin-right: 10px;
+}
+
+/* ================= PAGINATION ================= */
+.pagination {
+    padding: 20px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    background: var(--light-bg);
+    border-top: 1px solid var(--border);
+}
+
+#page-info {
+    font-size: 0.9rem;
+    color: var(--text-light);
+}
+
+/* ================= TABLE RESPONSIVE ================= */
+@media (max-width: 768px) {
+
+    #animals-table th,
+    #animals-table td,
+    #prenadas-table th,
+    #prenadas-table td,
+    #historial-table th,
+    #historial-table td {
+        padding: 10px;
+        font-size: 0.85rem;
+    }
+
+    .animal-actions,
+    .prenada-actions {
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .btn-action {
+        padding: 5px 8px;
+        font-size: 0.75rem;
+    }
+
+    .table-header {
+        flex-direction: column;
+        gap: 10px;
+        align-items: stretch;
+    }
+
+    .table-actions {
+        justify-content: space-between;
+    }
+
+    .pagination {
+        flex-direction: column;
+        gap: 10px;
+    }
+}

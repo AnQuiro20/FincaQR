@@ -1,0 +1,24 @@
+🚨 PRIORIDADES DE MEJORA
+CRÍTICO (Urgente):
+
+Mover credenciales de Supabase a variables de entorno
+
+Implementar autenticación (no hay login en el HTML)
+
+Añadir RLS (Row Level Security) en Supabase
+
+ALTA PRIORIDAD:
+
+Modularizar HTML en componentes
+
+Implementar sistema de templates o componentes web
+
+Mejorar accesibilidad (ARIA, keyboard navigation)
+
+MEDIA PRIORIDAD:
+
+Optimizar carga inicial
+
+Implementar service worker para offline
+
+Añadir PWA capabilities
