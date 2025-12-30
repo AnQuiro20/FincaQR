@@ -1,0 +1,183 @@
+/* Modal de Autenticación */
+.auth-modal {
+    max-width: 400px;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.auth-container {
+    text-align: center;
+    padding: 20px;
+}
+
+.auth-logo {
+    font-size: 48px;
+    color: var(--primary);
+    margin-bottom: 20px;
+}
+
+.auth-subtitle {
+    color: var(--text-secondary);
+    margin-bottom: 30px;
+}
+
+.password-input-container {
+    position: relative;
+}
+
+.password-input-container input {
+    padding-right: 45px;
+    width: 100%;
+}
+
+.btn-eye {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 5px;
+}
+
+.btn-eye:hover {
+    color: var(--primary);
+}
+
+.auth-error {
+    background: #fee;
+    color: #c33;
+    padding: 10px 15px;
+    border-radius: 6px;
+    border: 1px solid #fcc;
+    margin: 15px 0;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.auth-error i {
+    font-size: 18px;
+}
+
+.auth-actions {
+    display: flex;
+    gap: 10px;
+    margin: 25px 0;
+}
+
+.auth-actions button {
+    flex: 1;
+}
+
+.auth-footer {
+    margin-top: 25px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+}
+
+/* Modo solo lectura */
+.readonly-mode .btn-primary:not(.allow-readonly),
+.readonly-mode .btn-action.btn-edit,
+.readonly-mode .btn-action.btn-delete,
+.readonly-mode .btn-action.btn-delete,
+.readonly-mode #btn-nueva-prenada,
+.readonly-mode #btn-registrar-vacuna,
+.readonly-mode #btn-exportar,
+.readonly-mode .animal-card[onclick*="mostrarFormulario"] {
+    display: none !important;
+}
+
+.readonly-mode .form-actions,
+.readonly-mode .form-actions button:not(.btn-secondary) {
+    display: none;
+}
+
+.readonly-mode input:not([readonly]),
+.readonly-mode select:not([disabled]),
+.readonly-mode textarea:not([readonly]) {
+    background-color: #f8f9fa;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.readonly-banner {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 10px 20px;
+    text-align: center;
+    font-weight: 500;
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.readonly-banner i {
+    margin-right: 10px;
+}
+
+/* Botón de cambio de modo */
+.btn-mode-toggle {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: white;
+    padding: 8px 15px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    transition: all 0.3s ease;
+}
+
+.btn-mode-toggle:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+}
+
+.btn-mode-toggle i {
+    font-size: 16px;
+}
+
+/* Para modo solo lectura */
+.readonly-mode .btn-mode-toggle {
+    background: var(--primary);
+}
+
+.readonly-mode .btn-mode-toggle:hover {
+    background: var(--primary-dark);
+}
+
+/* Efecto shake para errores */
+@keyframes shake {
+
+    0%,
+    100% {
+        transform: translateX(0);
+    }
+
+    10%,
+    30%,
+    50%,
+    70%,
+    90% {
+        transform: translateX(-5px);
+    }
+
+    20%,
+    40%,
+    60%,
+    80% {
+        transform: translateX(5px);
+    }
+}
+
+.shake {
+    animation: shake 0.5s ease-in-out;
+}

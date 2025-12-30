@@ -6,6 +6,292 @@ const supabaseClient = createClient(
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1aXBxdXFpeGJncGh2c25ub2t1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY4MTE0MTAsImV4cCI6MjA4MjM4NzQxMH0.zU6NitwVOHvIYfuGvdrSauu5sFwves40vQI-sQXKvGw'
 );
 
+// ================= SISTEMA DE AUTENTICACIÓN =================
+let modoSoloLectura = false;
+const CODIGO_ACCESO = "A4314"; // Cambia esto por un código seguro
+const sessionTimeout = 60; // minutos antes de cerrar sesión
+
+// Función para inicializar el sistema de autenticación
+function inicializarAutenticacion() {
+    console.log('Inicializando sistema de autenticación...');
+    
+    // Verificar si ya hay una sesión activa
+    const sesionGuardada = localStorage.getItem('sesion_ganado');
+    const modoLectura = localStorage.getItem('modo_lectura');
+    
+    if (sesionGuardada) {
+        // Verificar si la sesión no ha expirado
+        const sesionData = JSON.parse(sesionGuardada);
+        const ahora = new Date().getTime();
+        
+        if (ahora < sesionData.expira) {
+            // Sesión válida, entrar en modo completo
+            entrarModoCompleto();
+            return;
+        } else {
+            // Sesión expirada, limpiar
+            localStorage.removeItem('sesion_ganado');
+        }
+    }
+    
+    if (modoLectura === 'true') {
+        // Entrar en modo solo lectura
+        entrarModoSoloLectura();
+    } else {
+        // Mostrar modal de autenticación
+        setTimeout(() => {
+            mostrarModalAutenticacion();
+        }, 500);
+    }
+}
+
+function mostrarModalAutenticacion() {
+    document.getElementById('auth-modal').classList.remove('hidden');
+    document.getElementById('auth-password').focus();
+    
+    // Configurar evento para mostrar/ocultar contraseña
+    document.getElementById('toggle-password').addEventListener('click', function() {
+        const input = document.getElementById('auth-password');
+        const icon = this.querySelector('i');
+        
+        if (input.type === 'password') {
+            input.type = 'text';
+            icon.classList.remove('fa-eye');
+            icon.classList.add('fa-eye-slash');
+        } else {
+            input.type = 'password';
+            icon.classList.remove('fa-eye-slash');
+            icon.classList.add('fa-eye');
+        }
+    });
+    
+    // Permitir presionar Enter
+    document.getElementById('auth-password').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            verificarAcceso();
+        }
+    });
+}
+
+function verificarAcceso() {
+    const password = document.getElementById('auth-password').value;
+    const errorElement = document.getElementById('auth-error');
+    const errorText = document.getElementById('auth-error-text');
+    
+    // Limpiar error anterior
+    errorElement.classList.add('hidden');
+    
+    if (!password) {
+        errorText.textContent = 'Por favor ingresa el código de acceso';
+        errorElement.classList.remove('hidden');
+        document.getElementById('auth-password').focus();
+        return;
+    }
+    
+    // Verificar código (en un caso real, esto sería en el servidor)
+    if (password === CODIGO_ACCESO) {
+        // Código correcto
+        entrarModoCompleto();
+        guardarSesion();
+    } else {
+        // Código incorrecto
+        errorText.textContent = 'Código de acceso incorrecto. Intenta nuevamente.';
+        errorElement.classList.remove('hidden');
+        document.getElementById('auth-password').value = '';
+        document.getElementById('auth-password').focus();
+        
+        // Efecto de vibración
+        const input = document.getElementById('auth-password');
+        input.classList.add('shake');
+        setTimeout(() => input.classList.remove('shake'), 500);
+    }
+}
+
+function guardarSesion() {
+    const ahora = new Date().getTime();
+    const expira = ahora + (sessionTimeout * 60 * 1000); // minutos a milisegundos
+    
+    const sesionData = {
+        timestamp: ahora,
+        expira: expira,
+        modo: 'completo'
+    };
+    
+    localStorage.setItem('sesion_ganado', JSON.stringify(sesionData));
+    localStorage.removeItem('modo_lectura');
+}
+
+function entrarModoCompleto() {
+    console.log('Entrando en modo completo (acceso total)');
+    modoSoloLectura = false;
+    
+    // Ocultar modal
+    document.getElementById('auth-modal').classList.add('hidden');
+    
+    // Remover banner de solo lectura si existe
+    const banner = document.querySelector('.readonly-banner');
+    if (banner) banner.remove();
+    
+    // Remover clase de solo lectura
+    document.body.classList.remove('readonly-mode');
+    
+    // Mostrar todos los botones de acción
+    document.querySelectorAll('.btn-primary, .btn-action').forEach(btn => {
+        btn.style.display = '';
+    });
+    
+    // Habilitar todos los formularios
+    document.querySelectorAll('input, select, textarea').forEach(input => {
+        if (input.hasAttribute('readonly')) input.removeAttribute('readonly');
+        if (input.hasAttribute('disabled')) input.removeAttribute('disabled');
+    });
+    
+    mostrarToast('success', 'Acceso completo', 'Tienes acceso total al sistema');
+}
+
+function entrarModoSoloLectura() {
+    console.log('Entrando en modo solo lectura');
+    modoSoloLectura = true;
+    
+    // Guardar preferencia
+    localStorage.setItem('modo_lectura', 'true');
+    localStorage.removeItem('sesion_ganado');
+    
+    // Ocultar modal
+    document.getElementById('auth-modal').classList.add('hidden');
+    
+    // Agregar banner informativo
+    const banner = document.createElement('div');
+    banner.className = 'readonly-banner';
+    banner.innerHTML = '<i class="fas fa-eye"></i> Modo de solo lectura - No puedes realizar modificaciones';
+    document.body.insertBefore(banner, document.body.firstChild);
+    
+    // Agregar clase de solo lectura al body
+    document.body.classList.add('readonly-mode');
+    
+    // Ocultar/deshabilitar elementos de edición
+    ocultarElementosEdicion();
+    
+    mostrarToast('info', 'Modo solo lectura', 'Puedes ver los datos pero no modificarlos');
+}
+
+function ocultarElementosEdicion() {
+    // Ocultar botones de acción
+    document.querySelectorAll('.btn-action.btn-edit, .btn-action.btn-delete').forEach(btn => {
+        btn.style.display = 'none';
+    });
+    
+    // Ocultar botones de registrar/agregar
+    const botonesAgregar = [
+        '#btn-nueva-prenada',
+        '#btn-registrar-vacuna',
+        '.animal-card[onclick*="mostrarFormulario"]',
+        '.btn-primary:not(.allow-readonly)'
+    ];
+    
+    botonesAgregar.forEach(selector => {
+        document.querySelectorAll(selector).forEach(btn => {
+            btn.style.display = 'none';
+        });
+    });
+    
+    // Hacer formularios de solo lectura
+    document.querySelectorAll('input:not([type="hidden"]), select, textarea').forEach(input => {
+        input.setAttribute('readonly', true);
+        input.setAttribute('disabled', true);
+    });
+    
+    // Ocultar acciones de formulario
+    document.querySelectorAll('.form-actions').forEach(actions => {
+        actions.style.display = 'none';
+    });
+}
+
+function cerrarSesion() {
+    if (modoSoloLectura) {
+        // Si está en modo solo lectura, volver a mostrar modal
+        mostrarModalAutenticacion();
+    } else {
+        // Preguntar confirmación
+        mostrarAdvertencia(
+            'Cerrar Sesión',
+            '¿Estás seguro de cerrar la sesión?',
+            'Volverás al modo de solo lectura.',
+            () => {
+                localStorage.removeItem('sesion_ganado');
+                localStorage.setItem('modo_lectura', 'true');
+                location.reload();
+            }
+        );
+    }
+}
+
+function cambiarModo() {
+    if (modoSoloLectura) {
+        // Si está en modo solo lectura, pedir código
+        mostrarModalAutenticacion();
+    } else {
+        // Si está en modo completo, preguntar si quiere ir a solo lectura
+        mostrarAdvertencia(
+            'Cambiar a Modo Solo Lectura',
+            '¿Quieres cambiar al modo de solo lectura?',
+            'No podrás realizar modificaciones hasta que ingreses el código nuevamente.',
+            () => {
+                localStorage.removeItem('sesion_ganado');
+                localStorage.setItem('modo_lectura', 'true');
+                location.reload();
+            }
+        );
+    }
+}
+
+// Agregar botón de cambio de modo en la UI
+function agregarBotonCambioModo() {
+    const header = document.querySelector('.app-header');
+    if (!header) return;
+    
+    const botonModo = document.createElement('button');
+    botonModo.id = 'btn-cambio-modo';
+    botonModo.className = 'btn-mode-toggle';
+    botonModo.innerHTML = `
+        <i class="fas ${modoSoloLectura ? 'fa-unlock' : 'fa-lock'}"></i>
+        <span>${modoSoloLectura ? 'Acceso Completo' : 'Solo Lectura'}</span>
+    `;
+    botonModo.onclick = cambiarModo;
+    
+    header.appendChild(botonModo);
+}
+
+// Verificar sesión periódicamente
+function iniciarVerificadorSesion() {
+    setInterval(() => {
+        const sesionGuardada = localStorage.getItem('sesion_ganado');
+        
+        if (sesionGuardada && !modoSoloLectura) {
+            const sesionData = JSON.parse(sesionGuardada);
+            const ahora = new Date().getTime();
+            
+            if (ahora > sesionData.expira) {
+                // Sesión expirada
+                mostrarAdvertencia(
+                    'Sesión Expirada',
+                    'Tu sesión ha expirado por inactividad',
+                    'Serás redirigido al modo de solo lectura.',
+                    () => {
+                        localStorage.removeItem('sesion_ganado');
+                        localStorage.setItem('modo_lectura', 'true');
+                        location.reload();
+                    }
+                );
+            } else if (ahora > sesionData.expira - (5 * 60 * 1000)) {
+                // 5 minutos antes de expirar
+                mostrarToast('warning', 'Sesión por expirar', 
+                    'Tu sesión expirará en 5 minutos');
+            }
+        }
+    }, 60 * 1000); // Verificar cada minuto
+}
+
 // ================= VARIABLES GLOBALES =================
 let ultimaOperacion = null;
 let datosPendientes = null;
@@ -78,11 +364,7 @@ function validarRango(numero, min, max, campo) {
     if (isNaN(num)) {
         return { valida: false, mensaje: `${campo} debe ser un número` };
     }
-    
-    if (num < min || num > max) {
-        return { valida: false, mensaje: `${campo} debe estar entre ${min} y ${max}` };
-    }
-    
+     
     return { valida: true, valor: num };
 }
 
@@ -5098,6 +5380,7 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('Sistema de ganado inicializado correctamente');
     console.log('Sistema de prenadas inicializado correctamente');
     console.log('Sistema de historial de partos listo');
+
 });
 
 function configurarValidacionTiempoReal() {
