@@ -64,25 +64,6 @@ function mostrarModalAutenticacion() {
     });
 }
 
-function mostrarModalAutenticacion() {
-    document.getElementById('auth-modal').classList.remove('hidden');
-    document.getElementById('auth-password').focus();
-    document.getElementById('auth-password').type = 'password'; // Asegurar que empiece como password
-    
-    // Configurar icono inicial
-    const icon = document.querySelector('#toggle-password i');
-    if (icon) {
-        icon.className = 'fas fa-eye';
-    }
-    
-    // Permitir presionar Enter
-    document.getElementById('auth-password').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            verificarAcceso();
-        }
-    });
-}
-
 function verificarAcceso() {
     const password = document.getElementById('auth-password').value;
     const errorElement = document.getElementById('auth-error');
@@ -2481,21 +2462,30 @@ async function cargarPrenadas() {
             
             if (prenada.fecha_parto_estimada) {
                 const fechaParto = new Date(prenada.fecha_parto_estimada);
-                diasRestantes = Math.ceil((fechaParto - hoy) / (1000 * 60 * 60 * 24));
+                fechaParto.setHours(0, 0, 0, 0); // Normalizar a inicio del día
+                hoy.setHours(0, 0, 0, 0); // Normalizar a inicio del día
                 
-                if (diasRestantes < 0) {
-                    claseFila = 'retrasada';
-                    estadoTexto = `Retrasada ${Math.abs(diasRestantes)} días`;
-                } else if (diasRestantes <= 7) {
-                    claseFila = 'proximo';
-                    estadoTexto = `Muy pronto (${diasRestantes} días)`;
-                } else if (diasRestantes <= 14) {
-                    claseFila = 'proximo';
-                    estadoTexto = `Próximo (${diasRestantes} días)`;
-                } else {
-                    estadoTexto = `Faltan ${diasRestantes} días`;
-                }
+                // Calcular diferencia en días
+                const diferenciaMs = fechaParto - hoy;
+                diasRestantes = Math.floor(diferenciaMs / (1000 * 60 * 60 * 24));
+                
+            // Si ya pasó la fecha, mostrar como retrasado
+            if (diasRestantes < 0) {
+                claseFila = 'retrasada';
+                estadoTexto = `Retrasada ${Math.abs(diasRestantes)} días`;
+            } else if (diasRestantes === 0) {
+                claseFila = 'hoy';
+                estadoTexto = '¡Parto hoy!';
+            } else if (diasRestantes <= 7) {
+                claseFila = 'proximo';
+                estadoTexto = `Muy pronto (${diasRestantes} día${diasRestantes !== 1 ? 's' : ''})`;
+            } else if (diasRestantes <= 14) {
+                claseFila = 'proximo';
+                estadoTexto = `Próximo (${diasRestantes} días)`;
+            } else {
+                estadoTexto = `Faltan ${diasRestantes} días`;
             }
+        }
             
             tr.className = claseFila;
             
