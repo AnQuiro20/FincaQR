@@ -48,22 +48,32 @@ function inicializarAutenticacion() {
 function mostrarModalAutenticacion() {
     document.getElementById('auth-modal').classList.remove('hidden');
     document.getElementById('auth-password').focus();
+    document.getElementById('auth-password').type = 'password'; // Asegurar que empiece como password
     
-    // Configurar evento para mostrar/ocultar contraseña
-    document.getElementById('toggle-password').addEventListener('click', function() {
-        const input = document.getElementById('auth-password');
-        const icon = this.querySelector('i');
-        
-        if (input.type === 'password') {
-            input.type = 'text';
-            icon.classList.remove('fa-eye');
-            icon.classList.add('fa-eye-slash');
-        } else {
-            input.type = 'password';
-            icon.classList.remove('fa-eye-slash');
-            icon.classList.add('fa-eye');
+    // Configurar icono inicial
+    const icon = document.querySelector('#toggle-password i');
+    if (icon) {
+        icon.className = 'fas fa-eye';
+    }
+    
+    // Permitir presionar Enter
+    document.getElementById('auth-password').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            verificarAcceso();
         }
     });
+}
+
+function mostrarModalAutenticacion() {
+    document.getElementById('auth-modal').classList.remove('hidden');
+    document.getElementById('auth-password').focus();
+    document.getElementById('auth-password').type = 'password'; // Asegurar que empiece como password
+    
+    // Configurar icono inicial
+    const icon = document.querySelector('#toggle-password i');
+    if (icon) {
+        icon.className = 'fas fa-eye';
+    }
     
     // Permitir presionar Enter
     document.getElementById('auth-password').addEventListener('keypress', function(e) {
@@ -5381,6 +5391,26 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('Sistema de prenadas inicializado correctamente');
     console.log('Sistema de historial de partos listo');
 
+});
+
+// Evento global para mostrar/ocultar contraseña
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('toggle-password').addEventListener('click', function() {
+        const input = document.getElementById('auth-password');
+        const icon = this.querySelector('i');
+        
+        if (!input || !icon) return;
+        
+        if (input.type === 'password') {
+            input.type = 'text';
+            icon.classList.remove('fa-eye');
+            icon.classList.add('fa-eye-slash');
+        } else {
+            input.type = 'password';
+            icon.classList.remove('fa-eye-slash');
+            icon.classList.add('fa-eye');
+        }
+    });
 });
 
 function configurarValidacionTiempoReal() {
