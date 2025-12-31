@@ -691,14 +691,18 @@ async function validarCamposVaca() {
     const errores = [];
     const advertencias = [];
     
-    // Validar ID
+    // Determinar si estamos en modo edición
+    const modoEdicion = document.getElementById('v_id').disabled;
+    const idActual = document.getElementById('v_id').value;
+    
+    // Validar ID (solo verificar disponibilidad si NO estamos editando)
     const id = document.getElementById('v_id').value;
     const validacionId = validarFormatoId(id);
     if (!validacionId.valida) {
         errores.push(validacionId.mensaje);
         marcarCampoError('v_id', validacionId.mensaje);
-    } else {
-        // Verificar unicidad solo si el formato es válido
+    } else if (!modoEdicion) {
+        // Solo verificar unicidad si NO estamos en modo edición
         try {
             const { disponible, mensaje } = await validarIdUnico(id, 'Vaca');
             if (!disponible) {
@@ -1643,17 +1647,25 @@ function cerrarTodosLosModales() {
 }
 
 // ================= FUNCIONES DE EDICIÓN Y ELIMINACIÓN =================
+// FUNCIÓN PRINCIPAL DE ELIMINACIÓN
 async function eliminarAnimal(id, nombre) {
     const nombreEscapado = nombre.replace(/'/g, "\\'").replace(/"/g, '\\"');
     
-    mostrarAdvertencia('Confirmar Eliminación', `¿Estás seguro de eliminar al animal "${nombreEscapado}" (ID: ${id})?`,
+    mostrarAdvertencia('Confirmar Eliminación', 
+        `¿Estás seguro de eliminar al animal "${nombreEscapado}" (ID: ${id})?`,
         'Esta acción no se puede deshacer. Todos los datos del animal serán eliminados permanentemente.',
         async () => {
             try {
                 cerrarAdvertencia();
-                mostrarLoading('Eliminando animal...');
+                mostrarLoading('Verificando animal...');
                 
-                const { data: animal, error: errorAnimal } = await supabaseClient.from('animales').select('tipo').eq('id', id).single();
+                // 1. Primero verificar si el animal existe y su tipo
+                const { data: animal, error: errorAnimal } = await supabaseClient
+                    .from('animales')
+                    .select('tipo')
+                    .eq('id', id)
+                    .single();
+                
                 if (errorAnimal) {
                     if (errorAnimal.code === 'PGRST116') {
                         ocultarLoading();
@@ -1667,75 +1679,427 @@ async function eliminarAnimal(id, nombre) {
                     throw errorAnimal;
                 }
                 
-                // Verificar relaciones
-                if (animal.tipo === 'Ternero') {
-                    const { data: ternerosComoPadre } = await supabaseClient.from('terneros').select('id').eq('padre', id);
-                    const { data: ternerosComoMadre } = await supabaseClient.from('terneros').select('id').eq('madre', id);
-                    if (ternerosComoPadre && ternerosComoPadre.length > 0) throw new Error('No se puede eliminar este animal porque es padre de otros terneros');
-                    if (ternerosComoMadre && ternerosComoMadre.length > 0) throw new Error('No se puede eliminar este animal porque es madre de otros terneros');
-                }
+                ocultarLoading();
                 
-                if (animal.tipo === 'Vaca') {
-                    const { data: ternerosDeVaca } = await supabaseClient.from('terneros').select('id').eq('madre', id);
-                    if (ternerosDeVaca && ternerosDeVaca.length > 0) throw new Error('No se puede eliminar esta vaca porque tiene terneros registrados');
-                }
-                
-                if (animal.tipo === 'Toro') {
-                    const { data: ternerosDeToro } = await supabaseClient.from('terneros').select('id').eq('padre', id);
-                    if (ternerosDeToro && ternerosDeToro.length > 0) throw new Error('No se puede eliminar este toro porque es padre de otros terneros');
-                }
-                
-                // Eliminar de tabla específica
-                let errorEspecifico = null;
+                // 2. Llamar a la función específica según el tipo
                 switch (animal.tipo) {
                     case 'Vaca':
-                        const { error: errorVaca } = await supabaseClient.from('vacas').delete().eq('id', id);
-                        errorEspecifico = errorVaca;
+                        await manejarEliminacionVaca(id, nombreEscapado);
                         break;
                     case 'Toro':
-                        const { error: errorToro } = await supabaseClient.from('toros').delete().eq('id', id);
-                        errorEspecifico = errorToro;
+                        await eliminarToro(id, nombreEscapado);
                         break;
                     case 'Ternero':
-                        const { error: errorTernero } = await supabaseClient.from('terneros').delete().eq('id', id);
-                        errorEspecifico = errorTernero;
+                        await eliminarTernero(id, nombreEscapado);
                         break;
+                    default:
+                        throw new Error(`Tipo de animal no reconocido: ${animal.tipo}`);
                 }
-                
-                if (errorEspecifico && errorEspecifico.code !== 'PGRST116') throw errorEspecifico;
-                
-                // Eliminar de tabla general
-                const { error: errorGeneral } = await supabaseClient.from('animales').delete().eq('id', id);
-                if (errorGeneral && errorGeneral.code !== 'PGRST116') throw errorGeneral;
-                
-                animalesCargados = animalesCargados.filter(a => a.id !== id);
-                animalesFiltrados = animalesFiltrados.filter(a => a.id !== id);
-                ocultarLoading();
-                mostrarConfirmacion(`Animal "${nombreEscapado}" eliminado correctamente.`);
-                renderizarTabla();
-                actualizarEstadisticasRapidas();
                 
             } catch (error) {
                 ocultarLoading();
-                console.error('Error eliminando animal:', error);
-                if (error.message.includes('No se puede eliminar')) {
-                    mostrarError('No se puede eliminar', error.message, 'Este animal tiene relaciones con otros registros. Elimina primero los animales relacionados.');
-                } else if (error.code === 'PGRST116') {
-                    animalesCargados = animalesCargados.filter(a => a.id !== id);
-                    animalesFiltrados = animalesFiltrados.filter(a => a.id !== id);
-                    renderizarTabla();
-                    actualizarEstadisticasRapidas();
-                    mostrarConfirmacion(`El animal ya había sido eliminado. Lista actualizada.`);
-                } else {
-                    mostrarError('Error al Eliminar', 'No se pudo eliminar el animal', error.message);
-                }
+                console.error('Error en eliminación:', error);
+                mostrarError('Error al Eliminar', 'No se pudo eliminar el animal', error.message);
             }
         }
     );
 }
 
-function limpiarReferenciaEliminacion() {
-    animalAEliminar = null;
+// FUNCIÓN PARA ELIMINAR TOROS
+async function eliminarToro(id, nombre) {
+    mostrarLoading('Eliminando toro...');
+    
+    try {
+        console.log(`Iniciando eliminación de toro #${id}...`);
+        
+        // 1. Actualizar terneros que tienen este toro como padre
+        console.log('Actualizando terneros relacionados...');
+        const { error: errorTerneros } = await supabaseClient
+            .from('terneros')
+            .update({ padre: null })
+            .eq('padre', id);
+        
+        if (errorTerneros) {
+            console.warn('Error actualizando terneros:', errorTerneros.message);
+        }
+        
+        // 2. Actualizar prenadas que tienen este toro como padre
+        console.log('Actualizando prenadas relacionadas...');
+        const { error: errorPrenadas } = await supabaseClient
+            .from('prenadas')
+            .update({ toro_padre: null })
+            .eq('toro_padre', id);
+        
+        if (errorPrenadas) {
+            console.warn('Error actualizando prenadas:', errorPrenadas.message);
+        }
+        
+        // 3. Eliminar de tabla específica de toros
+        console.log('Eliminando de tabla toros...');
+        const { error: errorToro } = await supabaseClient
+            .from('toros')
+            .delete()
+            .eq('id', id);
+        
+        if (errorToro && errorToro.code !== 'PGRST116') {
+            console.error('Error eliminando toro:', errorToro);
+            throw errorToro;
+        }
+        
+        // 4. Eliminar de tabla general de animales
+        console.log('Eliminando de tabla animales...');
+        const { error: errorAnimal } = await supabaseClient
+            .from('animales')
+            .delete()
+            .eq('id', id);
+        
+        if (errorAnimal && errorAnimal.code !== 'PGRST116') {
+            console.error('Error eliminando de tabla animales:', errorAnimal);
+            throw errorAnimal;
+        }
+        
+        // 5. Actualizar datos locales
+        console.log('Actualizando datos locales...');
+        animalesCargados = animalesCargados.filter(a => a.id !== id);
+        animalesFiltrados = animalesFiltrados.filter(a => a.id !== id);
+        
+        ocultarLoading();
+        
+        // 6. Mostrar confirmación
+        mostrarConfirmacion(`Toro "${nombre}" eliminado correctamente.\n\nLos terneros mantienen su registro pero sin referencia al padre.`);
+        
+        // 7. Actualizar UI
+        renderizarTabla();
+        actualizarEstadisticasRapidas();
+        
+        console.log(`Toro #${id} eliminado exitosamente`);
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error eliminando toro:', error);
+        
+        if (error.message.includes('foreign key constraint')) {
+            mostrarError('Error de Restricción', 
+                'No se puede eliminar el toro debido a restricciones en la base de datos',
+                `Posibles soluciones:\n\n1. En Supabase SQL Editor, ejecuta:\n   ALTER TABLE terneros DROP CONSTRAINT [nombre_constraint];\n   ALTER TABLE terneros ADD CONSTRAINT terneros_padre_fkey FOREIGN KEY (padre) REFERENCES toros(id) ON DELETE SET NULL;\n\n2. O marca el toro como eliminado en lugar de borrarlo.\n\nError: ${error.message}`);
+        } else {
+            mostrarError('Error al Eliminar', 'No se pudo eliminar el toro', error.message);
+        }
+    }
+}
+
+// FUNCIÓN PARA ELIMINAR TERNEROS
+async function eliminarTernero(id, nombre) {
+    mostrarLoading('Eliminando ternero...');
+    
+    try {
+        // 1. Verificar si este ternero es padre/madre de otros
+        const { data: comoPadre } = await supabaseClient
+            .from('terneros')
+            .select('id')
+            .eq('padre', id);
+        
+        const { data: comoMadre } = await supabaseClient
+            .from('terneros')
+            .select('id')
+            .eq('madre', id);
+        
+        if ((comoPadre && comoPadre.length > 0) || (comoMadre && comoMadre.length > 0)) {
+            throw new Error('No se puede eliminar este ternero porque es padre/madre de otros terneros');
+        }
+        
+        // 2. Eliminar de tabla específica
+        const { error: errorTernero } = await supabaseClient
+            .from('terneros')
+            .delete()
+            .eq('id', id);
+        
+        if (errorTernero && errorTernero.code !== 'PGRST116') {
+            throw errorTernero;
+        }
+        
+        // 3. Eliminar de tabla general
+        const { error: errorAnimal } = await supabaseClient
+            .from('animales')
+            .delete()
+            .eq('id', id);
+        
+        if (errorAnimal && errorAnimal.code !== 'PGRST116') {
+            throw errorAnimal;
+        }
+        
+        // 4. Actualizar datos locales
+        animalesCargados = animalesCargados.filter(a => a.id !== id);
+        animalesFiltrados = animalesFiltrados.filter(a => a.id !== id);
+        
+        ocultarLoading();
+        mostrarConfirmacion(`Ternero "${nombre}" eliminado correctamente.`);
+        
+        // 5. Actualizar UI
+        renderizarTabla();
+        actualizarEstadisticasRapidas();
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error eliminando ternero:', error);
+        mostrarError('Error al Eliminar', 'No se pudo eliminar el ternero', error.message);
+    }
+}
+
+// FUNCIÓN PARA MANEJAR ELIMINACIÓN DE VACAS
+async function manejarEliminacionVaca(id, nombre) {
+    try {
+        // Verificar si tiene prenadas
+        const { data: prenadas, error: errorPrenadas } = await supabaseClient
+            .from('prenadas')
+            .select('id, estado')
+            .eq('vaca_id', id);
+        
+        if (errorPrenadas) throw errorPrenadas;
+        
+        if (prenadas && prenadas.length > 0) {
+            const prenadasActivas = prenadas.filter(p => p.estado === 'Prenada' || p.estado === 'En proceso');
+            
+            if (prenadasActivas.length > 0) {
+                mostrarError('No se puede eliminar', 
+                    'Esta vaca tiene prenadas activas registradas',
+                    'Debes finalizar o cancelar las prenadas activas antes de eliminar la vaca.');
+                return;
+            }
+            
+            // Mostrar opciones para vacas con historial
+            mostrarAdvertencia(
+                'Vaca con Historial de Prenadas',
+                `Esta vaca tiene ${prenadas.length} registro(s) de preñez.`,
+                `¿Deseas eliminar la vaca y su historial completo?`,
+                async () => {
+                    await eliminarVacaConPrenadas(id, nombre, prenadas);
+                }
+            );
+        } else {
+            // Si no tiene prenadas, eliminar normalmente
+            await eliminarVacaSimple(id, nombre);
+        }
+    } catch (error) {
+        console.error('Error manejando eliminación de vaca:', error);
+        mostrarError('Error', 'No se pudo verificar el estado de la vaca', error.message);
+    }
+}
+
+// FUNCIÓN PARA ELIMINAR VACA SIN PRENADAS
+async function eliminarVacaSimple(id, nombre) {
+    mostrarLoading('Eliminando vaca...');
+    
+    try {
+        console.log(`Eliminando vaca #${id}...`);
+        
+        // 1. Actualizar terneros primero (poner madre como null)
+        console.log('Actualizando terneros relacionados...');
+        const { error: errorTerneros } = await supabaseClient
+            .from('terneros')
+            .update({ madre: null })
+            .eq('madre', id);
+        
+        if (errorTerneros) {
+            console.warn('Error actualizando terneros:', errorTerneros.message);
+        }
+        
+        // 2. Eliminar de tabla vacas
+        console.log('Eliminando de tabla vacas...');
+        const { error: errorVaca } = await supabaseClient
+            .from('vacas')
+            .delete()
+            .eq('id', id);
+        
+        if (errorVaca && errorVaca.code !== 'PGRST116') {
+            console.error('Error eliminando vaca:', errorVaca);
+            throw errorVaca;
+        }
+        
+        // 3. Eliminar de tabla animales
+        console.log('Eliminando de tabla animales...');
+        const { error: errorAnimal } = await supabaseClient
+            .from('animales')
+            .delete()
+            .eq('id', id);
+        
+        if (errorAnimal && errorAnimal.code !== 'PGRST116') {
+            console.error('Error eliminando de tabla animales:', errorAnimal);
+            throw errorAnimal;
+        }
+        
+        // 4. Actualizar datos locales
+        console.log('Actualizando datos locales...');
+        animalesCargados = animalesCargados.filter(a => a.id !== id);
+        animalesFiltrados = animalesFiltrados.filter(a => a.id !== id);
+        
+        ocultarLoading();
+        mostrarConfirmacion(`Vaca "${nombre}" eliminada correctamente.`);
+        
+        // 5. Actualizar UI
+        renderizarTabla();
+        actualizarEstadisticasRapidas();
+        
+        console.log(`Vaca #${id} eliminada exitosamente`);
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error eliminando vaca:', error);
+        
+        if (error.message.includes('foreign key constraint')) {
+            mostrarError('Error de Restricción', 
+                'No se puede eliminar la vaca debido a restricciones en la base de datos',
+                `Esta vaca tiene registros relacionados. Por favor, usa la opción "Eliminar con prenadas" si la vaca tiene historial de preñez.`);
+        } else {
+            mostrarError('Error al Eliminar', 'No se pudo eliminar la vaca', error.message);
+        }
+    }
+}
+
+// FUNCIÓN PARA ELIMINAR VACA CON PRENADAS (DEFINIDA AHORA)
+async function eliminarVacaConPrenadas(id, nombre, prenadas) {
+    mostrarLoading(`Eliminando vaca y ${prenadas.length} prenada(s) asociada(s)...`);
+    
+    try {
+        console.log(`Iniciando eliminación de vaca #${id} con ${prenadas.length} prenadas...`);
+        
+        // 1. Primero eliminar todas las prenadas asociadas a esta vaca
+        console.log(`Eliminando ${prenadas.length} prenadas...`);
+        const { error: errorPrenadas } = await supabaseClient
+            .from('prenadas')
+            .delete()
+            .eq('vaca_id', id);
+        
+        if (errorPrenadas) {
+            console.error('Error eliminando prenadas:', errorPrenadas);
+            throw errorPrenadas;
+        }
+        
+        // 2. Actualizar terneros para que no apunten a esta vaca
+        console.log('Actualizando terneros...');
+        const { error: errorUpdateTerneros } = await supabaseClient
+            .from('terneros')
+            .update({ madre: null })
+            .eq('madre', id);
+        
+        if (errorUpdateTerneros && errorUpdateTerneros.code !== 'PGRST116') {
+            console.warn('Error actualizando terneros:', errorUpdateTerneros);
+        }
+        
+        // 3. Eliminar de tabla específica de vacas
+        console.log('Eliminando de tabla vacas...');
+        const { error: errorVaca } = await supabaseClient
+            .from('vacas')
+            .delete()
+            .eq('id', id);
+        
+        if (errorVaca && errorVaca.code !== 'PGRST116') {
+            console.error('Error eliminando vaca:', errorVaca);
+            throw errorVaca;
+        }
+        
+        // 4. Eliminar de tabla general de animales
+        console.log('Eliminando de tabla animales...');
+        const { error: errorAnimal } = await supabaseClient
+            .from('animales')
+            .delete()
+            .eq('id', id);
+        
+        if (errorAnimal && errorAnimal.code !== 'PGRST116') {
+            console.error('Error eliminando de tabla animales:', errorAnimal);
+            throw errorAnimal;
+        }
+        
+        // 5. Actualizar datos locales
+        console.log('Actualizando datos locales...');
+        animalesCargados = animalesCargados.filter(a => a.id !== id);
+        animalesFiltrados = animalesFiltrados.filter(a => a.id !== id);
+        
+        ocultarLoading();
+        
+        // 6. Mostrar confirmación
+        let mensaje = `Vaca "${nombre}" y ${prenadas.length} registro(s) de preñez eliminados correctamente.`;
+        if (prenadas.some(p => p.estado === 'Finalizada')) {
+            mensaje += '\n\nNOTA: Los terneros nacidos de esta vaca mantienen su registro, pero ya no tendrán referencia a la madre.';
+        }
+        
+        mostrarConfirmacion(mensaje);
+        
+        // 7. Actualizar todas las vistas
+        renderizarTabla();
+        actualizarEstadisticasRapidas();
+        
+        // Actualizar otras pestañas si están activas
+        if (document.getElementById('tab-content-prenadas')?.classList.contains('active')) {
+            await cargarPrenadas();
+        }
+        
+        if (document.getElementById('tab-content-historial')?.classList.contains('active')) {
+            await cargarHistorialPartos();
+        }
+        
+        console.log(`Vaca #${id} con ${prenadas.length} prenadas eliminada exitosamente`);
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error eliminando vaca con prenadas:', error);
+        
+        if (error.message.includes('foreign key constraint')) {
+            mostrarError('Restricción de Base de Datos',
+                'No se pudo eliminar completamente debido a restricciones',
+                `SOLUCIONES RECOMENDADAS:\n\n1. En Supabase SQL Editor, ejecuta:\n   ALTER TABLE prenadas DROP CONSTRAINT prenadas_vaca_id_fkey;\n   ALTER TABLE prenadas ADD CONSTRAINT prenadas_vaca_id_fkey FOREIGN KEY (vaca_id) REFERENCES vacas(id) ON DELETE CASCADE;\n\n2. O intenta eliminar las prenadas manualmente primero desde la pestaña de prenadas.\n\nError: ${error.message}`);
+        } else {
+            mostrarError('Error al Eliminar', 'No se pudo eliminar la vaca y sus prenadas', error.message);
+        }
+    }
+}
+
+// FUNCIÓN PARA MARCAR VACA COMO ELIMINADA (SOFT DELETE)
+async function marcarVacaComoEliminada(id, nombre) {
+    mostrarLoading('Marcando vaca como eliminada...');
+    
+    try {
+        // 1. Actualizar vaca para marcarla como eliminada
+        const { error: errorUpdate } = await supabaseClient
+            .from('vacas')
+            .update({ 
+                eliminada: true,
+                fecha_eliminacion: new Date().toISOString(),
+                observaciones: `Vaca marcada como eliminada el ${new Date().toLocaleDateString()} - Conserva historial de preñez`
+            })
+            .eq('id', id);
+        
+        if (errorUpdate) {
+            console.error('Error marcando vaca como eliminada:', errorUpdate);
+            throw errorUpdate;
+        }
+        
+        // 2. Eliminar de tabla animales para que no aparezca en listados
+        const { error: errorAnimal } = await supabaseClient
+            .from('animales')
+            .delete()
+            .eq('id', id);
+        
+        if (errorAnimal && errorAnimal.code !== 'PGRST116') {
+            throw errorAnimal;
+        }
+        
+        // 3. Actualizar datos locales
+        animalesCargados = animalesCargados.filter(a => a.id !== id);
+        animalesFiltrados = animalesFiltrados.filter(a => a.id !== id);
+        
+        ocultarLoading();
+        mostrarConfirmacion(`Vaca "${nombre}" marcada como eliminada. El historial de partos se mantiene.`);
+        
+        // 4. Actualizar UI
+        renderizarTabla();
+        actualizarEstadisticasRapidas();
+        
+    } catch (error) {
+        ocultarLoading();
+        console.error('Error marcando vaca como eliminada:', error);
+        mostrarError('Error', 'No se pudo marcar la vaca como eliminada', error.message);
+    }
 }
 
 async function editarAnimal(id) {
