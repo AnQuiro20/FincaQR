@@ -2766,13 +2766,16 @@ async function registrarPrenada() {
 function formatearFecha(fechaISO) {
     if (!fechaISO) return 'N/A';
     try {
-        const fecha = new Date(fechaISO);
-        return fecha.toLocaleDateString('es-ES', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric'
-        });
+        const fechaPartes = fechaISO.split('T')[0].split('-');
+        const anio = fechaPartes[0];
+        const mes = fechaPartes[1];
+        const dia = fechaPartes[2];
+        
+        // Formatear manualmente para evitar problemas de zona horaria
+        return `${dia}/${mes}/${anio}`;
+        
     } catch (error) {
+        console.error('Error formateando fecha:', error, fechaISO);
         return 'Fecha inválida';
     }
 }
