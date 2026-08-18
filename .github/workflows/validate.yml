@@ -1,0 +1,22 @@
+name: Frontend Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check required files
+        run: test -f index.html
+      - name: Validate JavaScript syntax
+        run: node --check app.js
